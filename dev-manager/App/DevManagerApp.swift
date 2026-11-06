@@ -1,17 +1,12 @@
-//
-//  dev_managerApp.swift
-//  dev-manager
-//
-//  Created by Andy on 11/6/26.
-//
-
 import SwiftUI
 
 @main
 struct dev_managerApp: App {
+    @StateObject private var projectStore = ProjectStore()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(store: projectStore)
         }
     }
 }

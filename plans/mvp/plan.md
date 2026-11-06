@@ -69,7 +69,7 @@ Verification:
 Completion gate: supplied scaffold builds/launches on macOS 15 or later with app/test deployment targets set to 15.0, its actual paths and repeatable build/test procedure are known, and inherited failures are distinguished from future regressions. Missing scaffold/platform access blocks all application implementation.
 Evidence location: [evidence/step-0.1.md](evidence/step-0.1.md).
 
-Phase exit gate **G0**: after Step 0.1 checks, confirm the owner-created app builds/launches and its tooling/permissions can support a non-sandboxed current-user workflow. If Xcode selected App Sandbox by default, record it for the minimal configuration change in 1.2; do not pretend the empty shell already manages commands. Record G0 in `evidence/step-0.1.md` before dependent work or supervised approval to advance.
+Phase exit gate **G0**: after Step 0.1 checks, confirm the owner-created app builds/launches and its tooling/permissions can support a non-sandboxed current-user workflow. If Xcode selected App Sandbox by default, record it for the minimal configuration change in 1.1; do not pretend the empty shell already manages commands. Record G0 in `evidence/step-0.1.md` before dependent work or supervised approval to advance.
 
 ## Phase 1 — Real commands, logs, and owned process lifecycle
 
@@ -79,29 +79,38 @@ Review boundary: project settings, minimal useful UI, execution and cleanup; no 
 
 ### Step 1.1 — Persist project folders and editable commands
 
-Requirements / acceptance: R1, R10; AC1, AC3 (input validation portion; execution errors/alternate commands in 1.2).
+Requirements / acceptance: R1, R10, R11; AC1, AC3 (input validation portion; execution errors/alternate commands in 1.2), AC18.
 Depends on: Step 0.1 and G0.
 Review boundary: saved settings and project-selection UI, no process execution.
 
 Expected files:
 
-- `APP/Project.swift`, `APP/ProjectStore.swift` — simple Codable settings and stable project identity.
-- Existing root view or `APP/ProjectListView.swift`, `APP/ProjectDetailView.swift` — folder picker, selection, editable command and error feedback.
-- App entry point — initialize one store, not a background auto-starter.
+- `APP/Projects/Project.swift`, `APP/Projects/ProjectStore.swift` — simple Codable settings and stable project identity.
+- `APP/App/ContentView.swift` — split-view composition, selection/folder-picker coordination, and the small store-error banner.
+- `APP/Projects/Views/ProjectSidebar.swift` — project list/row and Add Project action.
+- `APP/Projects/Views/ProjectDetailView.swift` — project information, sections, and removal confirmation.
+- `APP/Projects/Views/CommandEditor.swift` — local command draft, field layout/validation, and save action.
+- `APP/App/devManagerApp.swift` — initialize one store, not a background auto-starter.
+- `APP/Assets.xcassets/` — existing root asset catalog, unchanged.
+- `TESTS/ScaffoldSmokeTests.swift`, `TESTS/Projects/ProjectStoreTests.swift` — existing native tests organized under the test source root.
+- `PROJECT` app-target configuration — apply the approved minimal move of App Sandbox disablement into Step 1.1; preserve signing, hardened runtime, deployment, and unrelated settings.
 
 Tasks:
 
-- [ ] Add folder registration with explicit directory/nonempty-command validation and editable `pnpm dev` default; do not require Git metadata or install dependencies.
-- [ ] Persist project identity, folder, and command in app-owned settings; handle read/write errors visibly without replacing unreadable data with a silent destructive overwrite.
-- [ ] Connect the minimal project list/detail UI; restoring settings never starts a command. Keep execution controls absent/disabled until 1.2 supplies a safe runner.
+- [x] Add folder registration with explicit directory/nonempty-command validation and editable `pnpm dev` default; do not require Git metadata or install dependencies.
+- [x] Persist project identity, folder, and command in app-owned settings; handle read/write errors visibly without replacing unreadable data with a silent destructive overwrite.
+- [x] Connect the minimal project list/detail UI; restoring settings never starts a command. Keep execution controls absent/disabled until 1.2 supplies a safe runner.
+- [x] Add stable-ID app-entry removal with native confirmation; leave the selected entry and disk contents unchanged on cancellation or save failure, disable removal in read-only mode, and explicitly leading-align the command field.
+- [x] Reorganize the existing source and test files into the approved folders, including the exact `devManagerApp.swift` filename, without changing command-layout behavior or store/model semantics.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:
 
-- Automated: build the app using the native procedure from 0.1; no persistence testing framework is added.
-- Manual: add a safe folder, edit its command, relaunch, and inspect retained values. Try blank command and missing/non-directory folder. No command should run, and the user's folder contents remain unchanged. Use an isolated app settings copy for any corrupt-data check; do not corrupt the owner's live configuration.
+- Automated: build the app using the native procedure from 0.1 and run only small native store tests for persisted removal, unchanged folder/file bytes, failed-save retention, and safe unknown-ID handling; no persistence testing framework is added.
+- Manual: add a safe folder, edit its command, relaunch, and inspect retained values. Try blank command and missing/non-directory folder. No command should run, and the user's folder contents remain unchanged. For a missing registered folder, recover by removing the app entry and re-adding the correct folder rather than switching it in place. Confirm the command field is leading-aligned, cancel removal, then confirm removal and verify the folder/files remain. Use an isolated app settings copy for any corrupt-data check; do not corrupt the owner's live configuration.
+- Source proof: inspect the detail view and store implementation to confirm the native confirmation text, stable-ID save-before-memory ordering, read-only disablement, selection reconciliation, and absence of folder-deletion or folder-switch calls. The owner owns the UI walkthrough; source inspection is implementation evidence only.
 
-Completion gate: AC1 is observable without any execution service; invalid input is recoverable and settings survive normal relaunch.
+Completion gate: AC1 and AC18 are observable without any execution service; invalid input is recoverable and settings survive normal relaunch. The verification task remains pending until the owner performs the add/edit/relaunch/blank/remove/cancel checks.
 Evidence location: [evidence/step-1.1.md](evidence/step-1.1.md).
 
 ### Step 1.2 — Start and stop an isolated real command with live output
@@ -116,11 +125,11 @@ Expected files:
 - `APP/ShellEnvironment.swift` — minimal owner-validated shell/environment loading.
 - Optional narrow `APP/ProcessLauncher.swift` or native launch wrapper only if required for process-group control; corresponding `PROJECT` target membership.
 - Project detail/root views — Start/Stop, separate process status, live logs and visible errors.
-- `PROJECT` settings/entitlements — disable App Sandbox for this workflow; no global network/TLS exceptions or privilege helpers.
+- `PROJECT` settings/entitlements — App Sandbox is disabled for this workflow by the approved Step 1.1 correction; no global network/TLS exceptions or privilege helpers.
 
 Tasks:
 
-- [ ] Add a unique run identity and serialized lifecycle per project. Launch from the configured directory under the user's shell/environment; validate missing tools and report startup/initialization failures. Keep shell bootstrap diagnostic output distinct from dev-command output where practical.
+- [ ] Add a unique run identity and serialized lifecycle per project. Launch from the configured directory under the user's shell/environment; validate missing tools and report startup/initialization failures. Keep shell bootstrap diagnostic output distinct from dev-command output where practical. When project removal is connected to a runner, disallow unregistering projects that are active or stopping; removal must never forget a managed run.
 - [ ] Establish a dedicated owned process group before executing the command, with command-shell job control disabled or equivalent demonstrated containment. If Foundation cannot guarantee this, use a small native spawn wrapper rather than assuming `Process.terminate()` kills descendants. Do not return a successful launch unless ownership is established.
 - [ ] Implement graceful interrupt/terminate/kill escalation using the finite budgets above, retain ownership through launcher exit while known children remain, and never signal unrelated processes or recycled identifiers. Block duplicate Start and new runs while known cleanup is unresolved.
 - [ ] Drain both pipes concurrently away from UI work, preserve stream/run identity, and keep a capped current-session log buffer with truncation feedback. Close unused stdin rather than offering terminal interaction.
@@ -338,6 +347,7 @@ Each row names the owning proof, not a progress field. G3 reconciles these notes
 | AC15 | 2.2 + 2.3 | Exit clears actions; 404 counts as responding; nonlocal redirects not fetched; TLS errors not bypassed. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC16 | 0.1/1.2 runtime; 3.2 G-share | Non-sandboxed current-user workflow and checked direct-distribution artifact before sharing. | [step-0.1](evidence/step-0.1.md), [step-1.2](evidence/step-1.2.md), [G-share](evidence/step-3.2.md) |
 | AC17 | 2.2 + 2.3 | Already trusted local HTTPS responds and opens as HTTPS without downgrade/trust bypass. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
+| AC18 | 1.1; G3 relaunch/removal composition | Command is leading-aligned; cancel is nonmutating; confirmed stable-ID removal changes only app settings; failed save retains entry/selection; folder/file bytes remain unchanged. | [step-1.1](evidence/step-1.1.md), [G3](evidence/step-3.1.md) |
 
 Final regression scope: native app build, the two focused native test groups, and the owner's integrated G3 sequence. Repeat affected focused checks for fixes; do not demand a nonexistent workspace-wide suite. Artifact proof remains a separate G-share boundary and does not imply permission to distribute.
 

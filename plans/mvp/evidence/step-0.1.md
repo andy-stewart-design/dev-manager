@@ -19,13 +19,13 @@ The unsigned Debug build returned exit code 0. Xcode emitted generic-destination
 
 - Owner: add the planned native macOS unit-test target through Xcode, use deployment target 15.0, and make it available to the app scheme's Test action; no UI tests are needed. Build/Run, close/reopen, and native Test baseline still need validation after that addition.
 - Coordinate representative safe projects, shell/version-manager environment, and listener prerequisites with the owner before live dev-command validation. No development processes or test listeners have been started.
-- App Sandbox remains enabled as scaffolded; the planned minimal change belongs to Step 1.2 before running development commands. No signing or entitlement change was made during handoff.
+- At the scaffold handoff, App Sandbox was enabled; the owner-approved minimal change was subsequently moved into Step 1.1 and is recorded in `changes.md`. No signing or unrelated entitlement change was made during handoff.
 - G0 is not satisfied: missing native test target and unobserved launch/test behavior keep Step 0.1's verification task unchecked. No feature implementation has begun.
 
 ## Follow-up: explicit technical scaffold completion
 
 - Acting on the current request to finish the technical portion of 0.1, added the missing native macOS Swift Testing target within the existing scaffold rather than regenerating the project: `TESTS = dev-managerTests/`, source `dev-managerTests/ScaffoldSmokeTests.swift`, target `dev-managerTests`, and shared scheme `dev-manager.xcodeproj/xcshareddata/xcschemes/dev-manager.xcscheme` with the test action wired to that target. The source contains one honest scaffold smoke test only; no feature behavior, dependencies, UI tests, harness, or development server was added.
-- Set the project default, app target, and test target `MACOSX_DEPLOYMENT_TARGET` values to `15.0`. The owner-supplied development team/signing style, app App Sandbox, and hardened-runtime settings were retained. Test-target inspection reports `com.apple.product-type.bundle.unit-test`; `otool` reports `minos 15.0` for both the built app executable and test bundle.
+- Set the project default, app target, and test target `MACOSX_DEPLOYMENT_TARGET` values to `15.0`. The owner-supplied development team/signing style and hardened-runtime settings were retained; App Sandbox was enabled at this earlier baseline and was later disabled in the app target under the approved Step 1.1 correction. Test-target inspection reports `com.apple.product-type.bundle.unit-test`; `otool` reports `minos 15.0` for both the built app executable and test bundle.
 - Final native build, using fresh derived data:
 
 ```sh
@@ -46,4 +46,4 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcodebuild -pr
 
 - Owner reported, “project runs fine,” confirming starter launch from Xcode. Combined with the native build/test results and verified 15.0 deployment settings above, this satisfies the corrected scaffold gate; Step 0.1 verification and G0 are complete. This is not proof of macOS 15 runtime behavior, Finder toolchain inheritance, or development-process functionality.
 - Owner correctly questioned the need for upfront Vite/Next repository paths: users will add projects through the app. Those paths and approved live-server scenarios are later manual-validation inputs, not scaffold blockers. Window/process lifetime remains an explicit Step 1.3 check; close/reopen was not separately observed here and is not claimed.
-- App Sandbox remains enabled intentionally until Step 1.2; no security-setting or feature change was made to close this gate. No Phase 1 work has begun. See `changes.md` for the narrow prerequisite correction.
+- The earlier plan intentionally left App Sandbox enabled until Step 1.2. The owner subsequently approved moving that already-planned change into Step 1.1; it is now recorded and implemented there. No Phase 1.2 process-execution work has begun. See `changes.md` for the narrow sequencing correction.

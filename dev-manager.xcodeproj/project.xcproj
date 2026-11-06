@@ -40,7 +40,7 @@
         "COMBINE_HIDPI_IMAGES": "YES",
         "CURRENT_PROJECT_VERSION": "1",
         "DEVELOPMENT_TEAM": "2X4TDXURY2",
-        "ENABLE_APP_SANDBOX": "YES",
+        "ENABLE_APP_SANDBOX": "NO",
         "ENABLE_HARDENED_RUNTIME": "YES",
         "ENABLE_PREVIEWS": "YES",
         "ENABLE_USER_SELECTED_FILES": "readonly",
@@ -62,18 +62,21 @@
         "SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY": "YES",
         "SWIFT_VERSION": "5.0",
       },
-    },
-    {
+    }, {
       "name": "dev-managerTests",
       "id": "A10594C9309E0B5F005A8CC3",
       "product": "Products/dev-managerTests.xctest",
       "product-type": "bundle.unit-test",
+      "dependencies": [
+        "dev-manager",
+      ],
       "build-phases": [
         "compile-sources",
         "frameworks",
         "resources",
       ],
       "build-settings": {
+        "BUNDLE_LOADER": "$(TEST_HOST)",
         "CODE_SIGN_STYLE": "Automatic",
         "CURRENT_PROJECT_VERSION": "1",
         "DEVELOPMENT_TEAM": "2X4TDXURY2",
@@ -82,6 +85,7 @@
         "PRODUCT_BUNDLE_IDENTIFIER": "design.andystew.dev-managerTests",
         "PRODUCT_NAME": "$(TARGET_NAME)",
         "SWIFT_VERSION": "5.0",
+        "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/dev-manager.app/Contents/MacOS/dev-manager",
       },
     },
   ],
