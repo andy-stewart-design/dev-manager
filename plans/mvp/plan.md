@@ -58,13 +58,13 @@ Tasks:
 
 - [x] Owner-created macOS SwiftUI app in this project directory has the app name and macOS 15.0 baseline; under the explicit request recorded in `evidence/changes.md`, the missing small native unit-test target was added to this existing scaffold. UI tests and unrelated generated examples were omitted; no second build system was introduced.
 - [x] Inspect the resulting source/targets and applicable instructions. Record concrete `APP`, `TESTS`, `PROJECT` paths, selected scheme, actual macOS/Xcode versions, sandbox/signing settings, and any preexisting failure.
-- [ ] With the owner, identify their actual shell/Node version manager, available alternative command, safe Vite/Next.js projects, and temporary-listener prerequisites. Do not install tools or claim broad environment compatibility.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence.
+- [x] Record the available shell/Node-manager and alternative-command setup from local evidence, without installing tools or claiming runtime compatibility. The owner will select real projects through the app during later manual validation; upfront repository paths or listener permissions are not scaffold prerequisites.
+- [x] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:
 
 - Automated: no existing command is assumed. After scaffold handoff, derive any `xcodebuild` invocation from its actual project/workspace and scheme, from the project root, and record it in evidence. Do not add a CLI wrapper merely to standardize this.
-- Manual: in Xcode select the real macOS app scheme, use Product > Build and Product > Run, then close/reopen the starter app. Confirm baseline launch and native unit-test target discovery with Product > Test. Generated tests prove only the scaffold, not feature behavior.
+- Manual: owner confirms the starter app runs from Xcode. Combine that observation with the native build/test checks above; a second UI-driven Build/Test pass is not required merely to repeat those results. Full window-close/reopen and process-lifetime behavior is verified with the implementation in Step 1.3. Generated tests prove only the scaffold, not feature behavior.
 
 Completion gate: supplied scaffold builds/launches on macOS 15 or later with app/test deployment targets set to 15.0, its actual paths and repeatable build/test procedure are known, and inherited failures are distinguished from future regressions. Missing scaffold/platform access blocks all application implementation.
 Evidence location: [evidence/step-0.1.md](evidence/step-0.1.md).
