@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var store: ProjectStore
+    @ObservedObject var runner: ProjectRunner
     @State private var selectedProjectID: UUID?
     @State private var isShowingFolderPicker = false
 
@@ -17,7 +18,7 @@ struct ContentView: View {
         } detail: {
             if let selectedProjectID,
                let project = store.projects.first(where: { $0.id == selectedProjectID }) {
-                ProjectDetailView(project: project, store: store)
+                ProjectDetailView(project: project, store: store, runner: runner)
                     .id(project.id)
             } else {
                 ContentUnavailableView(
@@ -84,5 +85,8 @@ private struct StoreErrorBanner: View {
 }
 
 #Preview {
-    ContentView(store: ProjectStore(settingsURL: URL(fileURLWithPath: "/tmp/dev-manager-preview-settings.json")))
+    ContentView(
+        store: ProjectStore(settingsURL: URL(fileURLWithPath: "/tmp/dev-manager-preview-settings.json")),
+        runner: ProjectRunner()
+    )
 }

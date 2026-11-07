@@ -1,0 +1,58 @@
+# Step 1.2 — Start and stop an isolated real command with live output
+
+## Implementation status
+
+Step 1.2 code is present, but the last worker was cancelled during follow-up review corrections. The latest build-only result below does not establish runtime correctness; earlier test results describe their earlier source revision. This remains an implementation record, not owner acceptance: Finder launch, the owner's real `pnpm dev`/toolchain, two real projects plus an unrelated server, startup cancellation, and normal-Quit observation remain pending. No Step 1.3 Restart/window/discovery work was added.
+
+- `Runs/ProcessLauncher.swift` now uses `posix_spawn` with a dedicated process group, explicit signal-default/mask reset, checked file-action/attribute initialization and additions, descriptor normalization above stdin/stdout/stderr, and protected cleanup for every spawn failure. The command is passed as a positional argument; readiness is an exact private inherited-pipe byte, not a log marker.
+- The launcher observes the direct child with `waitid(... WNOWAIT ...)` and keeps that child unreaped through the one shared per-run cleanup task. Native process-group inspection ignores the owned leader once it is a zombie and checks non-zombie members before each group signal. The leader is reaped only after the group is gone; no production path signals a bare/recycled PGID.
+- `Runs/ProcessIdentity.c/.h` is the narrow native wrapper for macOS `libproc` group-member/status inspection. It conservatively treats inspection failure as live/unknown. Created children are directly terminated/reaped on post-spawn ownership verification failure without signaling an unexpected observed group.
+- `Runs/ProjectRunner.swift` joins duplicate Stop/quit cleanup to one task and keeps `activeRuns` ownership until cleanup, both output streams, and the anchored launcher completion are finished. Late ready/exit/output events cannot turn a terminal run back into running. Startup readiness has a separate 10-second timeout.
+- `Runs/OutputReader.swift` adds a bounded per-run pending handoff (256 KiB), one scheduled main-actor drain, dropped-byte notices, bounded incomplete UTF-8-safe-ish line storage (64 KiB per stream), and coalesced publication. `LogBuffer` remains capped at 2 MiB.
+- `App/AppLifecycle.swift` sets the runner termination gate before awaiting, performs blocking OS cleanup in detached tasks, replies false on cleanup failure, and retains ownership. Start/Stop/remove controls derive from runner ownership and the quit gate. Removal confirmation rechecks `runner.canRemove` immediately before synchronous store mutation.
+
+## Actual native checks
+
+All commands were run from the project root with the requested scoped developer directory, unsigned build, and fresh temporary derived data. No TCP servers, installs, external repositories, credentials, or global settings were used.
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  xcodebuild -project dev-manager.xcodeproj -scheme dev-manager \
+  -configuration Debug -destination 'generic/platform=macOS' \
+  -derivedDataPath /tmp/dev-manager-last-build \
+  CODE_SIGNING_ALLOWED=NO build
+```
+
+Result: exit 0; unsigned native Debug build succeeded. A prior `-quiet` invocation emitted an Xcode diagnostic despite a successful non-quiet rerun; the non-quiet command completed successfully.
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  xcodebuild -project dev-manager.xcodeproj -scheme dev-manager \
+  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath /tmp/dev-manager-finalverify CODE_SIGNING_ALLOWED=NO test
+```
+
+Result: exit 0; all 13 Swift Testing tests passed, including the existing persistence tests and real subprocess checks for cwd/stdout/stderr, duplicate Start, separate process-group survival, concurrent Stop joining, missing-command reporting, and 500 KiB unterminated high-rate output with bounded retained/truncation-accounted state.
+
+The focused subprocess tests clean up their owned groups in normal and deferred paths. They do not prove the owner's Finder environment, real `fnm`/Homebrew setup, or arbitrary detached daemons.
+
+## Verification / handoff status
+
+- The earlier build/test checks above were performed, but do not constitute verification of all subsequent review fixes. The latest working tree has only the build-only check below; runtime behavior is unverified.
+- Step 1.2 owner verification checkbox: **pending**. The owner must still launch the built app through Finder and validate real projects/tool versions, independent project/server isolation, startup cancellation, and normal Quit.
+- Step 1.1 manual walkthrough remains pending in its own evidence. Step 1.3 and all URL/discovery/browser work remain untouched.
+- No claim is made that cleanup after crash/Force Quit or deliberately detached daemon ownership is guaranteed; those remain outside the governing MVP scope.
+
+## Readiness descriptor correction
+
+Owner screenshot showed `zsh:1: command not found: 11`: the wrapper's `exec 11>&-` was interpreted as a command, not a multi-digit descriptor close. Changed only the launcher script to close through zsh's parameter-based redirection (`exec {_dev_manager_ready_fd}>&-`). At the owner's request for a quick manual retest, no build, test, app launch, or development command was run after this edit. Runtime confirmation remains pending.
+
+## Build-only handoff after worker cancellation
+
+At the owner's request to shorten worker sessions and leave manual testing to them, ran one build only from the project root:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcodebuild -quiet -project dev-manager.xcodeproj -scheme dev-manager -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath /tmp/dev-manager-1.2-handoff.RA7WsD CODE_SIGNING_ALLOWED=NO build
+```
+
+Exit 0; Xcode emitted a generic-destination metadata warning. No app was launched and no tests or development commands were run. App-hosted test runs are no longer automatic because they launch the host app. The owner will first validate one project through the app: Start, Running/log output, Stop, Start again, then normal Quit cleanup. Step 1.2 acceptance remains unchecked.

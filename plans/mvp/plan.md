@@ -129,11 +129,11 @@ Expected files:
 
 Tasks:
 
-- [ ] Add a unique run identity and serialized lifecycle per project. Launch from the configured directory under the user's shell/environment; validate missing tools and report startup/initialization failures. Keep shell bootstrap diagnostic output distinct from dev-command output where practical. When project removal is connected to a runner, disallow unregistering projects that are active or stopping; removal must never forget a managed run.
-- [ ] Establish a dedicated owned process group before executing the command, with command-shell job control disabled or equivalent demonstrated containment. If Foundation cannot guarantee this, use a small native spawn wrapper rather than assuming `Process.terminate()` kills descendants. Do not return a successful launch unless ownership is established.
-- [ ] Implement graceful interrupt/terminate/kill escalation using the finite budgets above, retain ownership through launcher exit while known children remain, and never signal unrelated processes or recycled identifiers. Block duplicate Start and new runs while known cleanup is unresolved.
-- [ ] Drain both pipes concurrently away from UI work, preserve stream/run identity, and keep a capped current-session log buffer with truncation feedback. Close unused stdin rather than offering terminal interaction.
-- [ ] Wire real Start/Stop and errors atomically; coordinate normal app termination with owned cleanup immediately so this review boundary cannot strand live runs through ordinary Quit. Step 1.3 extends and validates the full window/restart experience.
+- [x] Add a unique run identity and serialized lifecycle per project. Launch from the configured directory under the user's shell/environment; validate missing tools and report startup/initialization failures. Keep shell bootstrap diagnostic output distinct from dev-command output where practical. When project removal is connected to a runner, disallow unregistering projects that are active or stopping; removal must never forget a managed run.
+- [x] Establish a dedicated owned process group before executing the command, with command-shell job control disabled or equivalent demonstrated containment. If Foundation cannot guarantee this, use a small native spawn wrapper rather than assuming `Process.terminate()` kills descendants. Do not return a successful launch unless ownership is established.
+- [x] Implement graceful interrupt/terminate/kill escalation using the finite budgets above, retain ownership through launcher exit while known children remain, and never signal unrelated processes or recycled identifiers. Block duplicate Start and new runs while known cleanup is unresolved.
+- [x] Drain both pipes concurrently away from UI work, preserve stream/run identity, and keep a capped current-session log buffer with truncation feedback. Close unused stdin rather than offering terminal interaction.
+- [x] Wire real Start/Stop and errors atomically; coordinate normal app termination with owned cleanup immediately so this review boundary cannot strand live runs through ordinary Quit. Step 1.3 extends and validates the full window/restart experience.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:

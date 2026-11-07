@@ -38,3 +38,8 @@
 - Actual user authorization: the owner accepted the proposed source structure with “This seems good to me” and explicitly requested the source filename rename `dev_managerApp.swift` → `devManagerApp.swift`.
 - Scope: preserve the current command layout and all existing behavior while organizing the existing app/test sources under the approved folders. No target, bundle, module, scheme, dependency, signing, sandbox, runtime, or settings-format rename/change was authorized by this refactor.
 - The exact current source map and verification are recorded in `evidence/step-1.1.md`; historical scaffold/implementation notes above retain their original paths and are not rewritten as if the new layout existed earlier.
+
+## Explicit request: proceed with Step 1.2
+
+- Actual user direction: after the Step 1.1 UI discussion, the owner said, “Nice. Let's do1.2”. This records approval to begin the Step 1.2 implementation review increment; it does not claim the still-pending Step 1.1 manual checkbox or any individual manual acceptance observation.
+- Narrow source-layout amendment used for this increment: add `APP/Runs/` for `ProjectRunner`, `RunState`, `LogBuffer`, `ShellEnvironment`, `ProcessLauncher`, and `OutputReader`, plus `APP/App/AppLifecycle.swift` and `TESTS/Runs/ProjectRunnerTests.swift`. These are the plan's named leaf responsibilities and native integration points, not a new orchestration layer or new behavior outside Step 1.2. Existing app/store/project/view structure and target settings were preserved.
