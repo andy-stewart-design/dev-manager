@@ -24,6 +24,7 @@ Included:
 - View command output and distinguish process lifecycle from website availability.
 - Automatically discover current-run local HTTP/HTTPS websites, including dynamically selected ports, and open them in the default browser.
 - Window-close and app-quit behavior that preserves clear ownership of managed processes.
+- Best-effort, warning-only recovery of verified stale managed process groups on the next launch, under an explicit single-app-instance assumption.
 - Owner-created Xcode scaffold and primarily owner-driven manual validation.
 
 Non-goals:
@@ -31,6 +32,7 @@ Non-goals:
 - Mac App Store sandboxing, a full terminal emulator, or interactive command input.
 - Git operations, dependency installation, editing project files, or one app-managed command per service within a project.
 - Launch-at-login, automatic project startup, automatic crash restart, or reconnecting to processes from a previous app instance.
+- Guaranteed stale-process recovery, adoption/reconnection, crash-instant cleanup, watchdog supervision, or concurrent-instance coordination.
 - LAN/public URL presentation, remote development, containers' internal port discovery, tunnels, or guaranteed discovery for arbitrary non-web commands.
 - Deep application health checks, continuous uptime monitoring, persistent log archives, or guaranteed cleanup after Force Quit/crash.
 - A sophisticated testing harness, exhaustive automated coverage, or broad UI automation for the initial MVP.
@@ -56,6 +58,7 @@ Non-goals:
 - **R9 — Run freshness and cancellation:** Stop, exit, and Restart invalidate website actions from the affected run. Delayed logs, probes, and discovery results from an older run cannot update the new run or resurrect a stale action. Stopping during startup remains possible. The app must not deliberately open a site from an ended run.
 - **R10 — Distribution and trust boundary:** The MVP requires macOS 15.0 or later and targets direct distribution outside the Mac App Store, without App Sandbox restrictions on its development-command workflow. Commands run as the current user, never through automatic privilege escalation. Selecting a folder is not authorization to execute it automatically.
 - **R11 — App-only project removal:** After explicit confirmation, a registered project can be removed from the app's saved entries by stable ID without deleting, moving, or modifying its folder or files. Cancellation is nonmutating; a failed save retains the entry and selection with a visible recoverable error, and removal is disabled in read-only settings mode.
+- **R12 — Best-effort stale-run recovery:** The app may recover a stale managed process group on launch only when one atomic app-support JSON journal entry identifies the project, PID, PGID, and OS process start time, and all identity checks are positive. It rechecks identity before each SIGTERM/SIGKILL, uses a short finite wait between signals, and emits warning diagnostics without requiring a UI warning. Dead, mismatched, or ambiguous metadata is dropped or left alone without signaling. Journal I/O failure never deletes project settings or stops a process that is not positively owned; concurrent app instances are explicitly unsupported.
 
 ## Behavior and contracts
 
@@ -92,6 +95,7 @@ Exact labels, icons, and visual layout are implementation choices. Discovery can
 - Graceful shutdown and escalation must cover ordinary child processes spawned by package managers. Implementation may choose process groups, a helper, or another suitable mechanism; terminating only the initial launcher is insufficient.
 - Shutdown/probe timings are finite implementation settings rather than user-facing configuration in v1. Their values must be documented in the later plan and exercised manually; no indefinite quit wait is acceptable.
 - Failure to launch or stop does not delete project configuration. If cleanup cannot be completed, do not claim success; surface the condition and preserve whatever ownership information remains usable.
+- Stale-run recovery is deliberately bounded and warning-only: write one atomic JSON entry per run after spawn as soon as practical, remove it only after confirmed stop, and accept the spawn-to-write window. On launch, require a live PID, matching OS process start time, and the PID still leading the recorded positive PGID before signaling; recheck identity before each signal. A dead leader with live children is dropped rather than recovered. Recovery never adopts/reconnects, calls a child-only `waitpid` routine for a non-child orphan, installs a watchdog, or adds locking/owner metadata, PTY support, environment markers, or log archives. Failed journal I/O is logged and does not alter project settings or non-owned processes.
 
 ### URL discovery and readiness
 
@@ -115,6 +119,7 @@ The one-command model, package-manager freedom, lifecycle behavior, automatic dy
 - The app owns registered project settings, processes it launches, their captured output, and per-run discovery state. It does not own repository contents, dependencies, shell profiles, or unrelated processes/listeners.
 - The configured development command owns the project's build/start behavior. The browser owns navigation after opening the selected URL. Git metadata is not a source of process or website readiness.
 - Runtime candidates and async work belong to a specific project/run identity. No stale candidate or broad port-based shutdown may cross that boundary.
+- The app owns only its journal metadata and may signal a stale process group after positive identity checks; it does not adopt the process as a new run or reap a non-child orphan.
 - Signed/notarized distribution is the recommended release path, not permission to publish. The initial locally working MVP does not depend on a sophisticated installer, update service, or release pipeline.
 
 ## Acceptance criteria
@@ -141,12 +146,14 @@ All checks below are proposed, not executed. Manual validation is the primary ac
 | AC16 | R10            | Review development/distribution configuration and perform a normal user launch.                                                                                 | Workflow is outside App Sandbox restrictions, runs at current-user privileges, and does not request automatic elevation.                                                                                                                                    | Static configuration review and owner manual validation; signing/notarization checked before sharing. |
 | AC17 | R6, R7, R8     | Start a managed local HTTPS server with a certificate already trusted by the system and a discoverable URL or owned listener.                                   | The responding HTTPS endpoint becomes one openable local choice using HTTPS, without silently downgrading it or disabling certificate validation.                                                                                                           | Manual targeted check; owner supplies a trusted local HTTPS setup when available.                     |
 | AC18 | R1, R11        | Select a saved project, inspect its command field, cancel the removal confirmation, then confirm removal; separately make the settings save fail during removal. | The command field is explicitly leading-aligned. Cancel leaves the selected entry and disk folder/files unchanged. Confirmed removal deletes only the app's saved entry by stable ID, clears the selection or selects another registered project, and leaves folder/file bytes untouched. A failed save leaves the entry and selection intact with a visible recoverable error; read-only mode disables removal. | Native store tests plus owner UI walkthrough. |
+| AC19 | R12            | Start a managed server, stop the app without confirmed cleanup, then relaunch under the single-app-instance assumption; separately present dead, start-time-mismatched, and ambiguous journal metadata. | A journal entry is written after spawn as soon as practical and removed only after confirmed stop. Relaunch signals only a live PID whose OS start time matches and which still leads the recorded positive PGID, using SIGTERM then short-wait SIGKILL with identity rechecks. Dead or mismatched metadata is dropped without signals; ambiguous permission/group/identity is left alone with a diagnostic warning; normal cleanup removes the entry. A dead leader with live children is deliberately not recovered, and journal I/O failure does not delete project settings or stop non-owned processes. | Owner-approved manual recovery walkthrough with isolated metadata fixtures only if needed; focused journal/state checks are optional and do not require a harness. |
 
 ## Assumptions
 
 - **Noninteractive commands:** A pipe/log experience is sufficient; terminal input, TUIs, and PTY behavior are not MVP requirements. Validate with representative real projects before broadening scope.
 - **Persistence and logs:** Project settings persist; logs use a bounded current-session buffer and may be truncated with clear indication. Exact buffer size/storage is an implementation choice, not a reason to add a persistence framework.
 - **Manual startup:** Registered projects do not auto-start on launch. `pnpm dev` is a convenience default, not required tooling.
+- **Recovery instance model:** Stale-run recovery assumes one app instance; concurrent instances are unsupported rather than coordinated with a lock or owner metadata.
 - **Local aliases:** `127.0.0.1` and `::1` count as localhost for this feature. Other custom domains, including custom loopback-resolving names, are excluded initially.
 - **Git/folder handling:** Typical inputs are Git project folders, but Git integration or Git-only eligibility checks are unnecessary for running a command. Missing/non-directory paths must be rejected; no automatic Git initialization is implied.
 - **Readiness definition:** Any actual HTTP response establishes site responsiveness, not successful rendering. A finite no-site indication is informational and must not prevent later discovery.
@@ -159,6 +166,7 @@ All checks below are proposed, not executed. Manual validation is the primary ac
 - **Blocking:** None at the behavioral-spec level. Application implementation depends on the owner's Xcode scaffold being available. This is an explicit handoff dependency, not a request for the agent to generate it.
 - **Non-blocking — discovery limits:** An arbitrary command can detach children, delegate to existing external services, use non-TCP transports, or expose ambiguous endpoints. The MVP guarantees automatic behavior for the supported local process-owned HTTP/HTTPS cases, not omniscient discovery. Validate the socket fallback early; report unsupported/no-site cases truthfully.
 - **Non-blocking — ownership and shutdown:** Descendants that deliberately detach can escape ordinary tracking. Avoid unsafe global port-based termination; visibly report known cleanup failures. Force Quit/crashes can leave servers running, and a later app instance must not adopt/kill them by port alone.
+- **Non-blocking — stale-run recovery:** The journal narrows a best-effort relaunch cleanup decision to positive PID/start-time/PGID identity; permission or group ambiguity, a dead leader with live children, journal I/O failure, and the spawn-to-write window remain deliberately unresolved without signals.
 - **Non-blocking — shell initialization:** Startup files may be slow, emit output, prompt, or select different Node versions. Environment loading needs diagnostics and manual validation without modifying user configuration.
 - **Non-blocking — HTTPS:** Self-signed development certificates may prevent verified readiness. Trusted local HTTPS is eligible; custom certificate trust and browser warnings require a later deliberate policy.
 - **Non-blocking — scaffold details:** The minimum deployment target is settled at macOS 15.0. Xcode project structure, signing identity, and app name are set with the owner when the scaffold is supplied; none changes the agreed MVP behavior.

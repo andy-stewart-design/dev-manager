@@ -20,7 +20,8 @@ This plan is an execution contract. Routine changes are limited to checking perf
 - The app may execute only explicitly started commands under current-user privileges. Never signal a process because it owns a familiar port, modify repository/shell files, install project dependencies, or use automatic elevation. Preserve unrelated work and unrelated services.
 - Use a bounded pipe/log experience, not a PTY. Start and cleanup must be delivered together before exposing live command execution. Keep UI consumers and their state changes buildable within each step.
 - Proposed initial internal limits: 2 MiB retained log text per project across identifiable current-session run segments; graceful interrupt for up to 3 seconds, terminate for another 2 seconds, then kill and allow 1 second for confirmation; 10-second bounded environment-initialization attempt; 2-second per-request probe deadline; at most four concurrent probes per run; owned-listener scan every 2 seconds while the run is active; show an informational no-site result after 15 seconds without ending discovery. Quit shuts down runs concurrently rather than multiplying the per-run budget. Unexpected cleanup failure must remain visible. These are planned defaults to validate, not observed behavior or permission to change the contract silently.
-- Automated coverage stays small: proposed `LocalURLCandidateTests` and `RunFreshnessTests` in a native Xcode unit-test target. No UI tests, CI setup, coverage target, exhaustive shell matrix, or persistent fixture service. Use a few disposable manual commands/servers and existing owner projects for live proof.
+- Focused checks stay small and manual-first: proposed `LocalURLCandidateTests` plus focused run-freshness checks in the existing `TESTS/Runs/ProjectRunnerTests.swift` remain optional owner-approved checks. No UI tests, CI setup, coverage target, exhaustive shell matrix, persistent fixture service, or new hosted-test infrastructure. Use owner-run manual commands/servers and existing owner projects for live proof; do not automatically launch the app or run hosted tests because app-hosted tests launch the app.
+- Future verification gates should use the actual owner-approved Xcode build procedure and owner manual behavior checks first. A focused native test or isolated metadata check is optional only with explicit owner approval; historical test/build evidence remains historical and is not rewritten as new proof.
 - Before touching owner projects, starting listeners, occupying ports, running high-output commands, or building an artifact, coordinate the session with the owner. The owner supplies safe project paths, available ports, installed tools, and necessary platform access. Missing prerequisites block their specific checks; they are not passes.
 - Every completed step gets a short note at its predetermined evidence location. Record check/action, observed result, and material caveat, usually in a few bullets. No empty evidence files during planning, chronological diaries, raw transcripts, or duplicate progress ledgers. Failed/blocked/skipped/waived gates remain unchecked; record rationale, known approval owner, and follow-up. A waiver is not a pass.
 
@@ -29,13 +30,13 @@ This plan is an execution contract. Routine changes are limited to checking perf
 | Phase | Outcome | Dependencies | Exit gate |
 | --- | --- | --- | --- |
 | 0 | Owner-provided scaffold and reproducible native build baseline | Owner Xcode handoff | G0: inspect real targets/settings, build and launch the supplied app |
-| 1 | Useful project/process manager with logs and safe lifecycle | G0 | G1: two independent live projects, bounded cleanup, window/quit behavior |
+| 1 | Useful project/process manager with logs, safe lifecycle, separated supervision/state composition, and bounded stale-run recovery | G0 | G1: two independent live projects, bounded cleanup, window/quit behavior, Step 1.2a composition, and best-effort Step 1.4 recovery review |
 | 2 | Automatic current-run localhost discovery and browser opening | G1 | G2: dynamic ports, silent-server fallback, filtering, stale-run isolation |
 | 3 | Owner-validated MVP and separate direct-distribution check | G2; owner access to real projects/certificates/signing as needed | G3: complete acceptance reconciliation; G-share: artifact suitability before sharing |
 
 Delivery boundary: one feature-complete change set, or one PR if the owner establishes Git and wants a PR. Phases are review increments, not separate PR requirements. No commit, push, sharing, or release is authorized by this plan.
 
-Atomic groups: each step's implementation, state consumers, target membership, and focused verification land/revert together. In particular, Step 1.2 must never expose a launcher without its stop/isolation behavior. There is no replacement implementation or schema migration to remove.
+Atomic groups: each step's implementation, state consumers, target membership, and focused verification land/revert together. In particular, Step 1.2 must never expose a launcher without its stop/isolation behavior; Step 1.2a must keep supervision and main-actor state transitions together; Step 1.4 must keep journal writes, recovery decisions, and confirmed-cleanup removal together. There is no replacement implementation or schema migration to remove.
 
 ## Phase 0 — Owner scaffold and baseline handoff
 
@@ -73,9 +74,9 @@ Phase exit gate **G0**: after Step 0.1 checks, confirm the owner-created app bui
 
 ## Phase 1 — Real commands, logs, and owned process lifecycle
 
-Outcome: users can save projects and safely run their actual development commands without website-opening functionality yet.
+Outcome: users can save projects, safely run their actual development commands, keep supervision off the UI actor, and review bounded stale-run recovery without website-opening functionality yet.
 Depends on: G0.
-Review boundary: project settings, minimal useful UI, execution and cleanup; no URL guessing or browser action.
+Review boundary: project settings, minimal useful UI, execution/cleanup ownership, narrow runner composition, and best-effort recovery; no URL guessing or browser action.
 
 ### Step 1.1 — Persist project folders and editable commands
 
@@ -106,8 +107,8 @@ Tasks:
 
 Verification:
 
-- Automated: build the app using the native procedure from 0.1 and run only small native store tests for persisted removal, unchanged folder/file bytes, failed-save retention, and safe unknown-ID handling; no persistence testing framework is added.
-- Manual: add a safe folder, edit its command, relaunch, and inspect retained values. Try blank command and missing/non-directory folder. No command should run, and the user's folder contents remain unchanged. For a missing registered folder, recover by removing the app entry and re-adding the correct folder rather than switching it in place. Confirm the command field is leading-aligned, cancel removal, then confirm removal and verify the folder/files remain. Use an isolated app settings copy for any corrupt-data check; do not corrupt the owner's live configuration.
+- Owner-approved only: use the native build procedure from 0.1 and, if explicitly approved, run only small native store checks for persisted removal, unchanged folder/file bytes, failed-save retention, and safe unknown-ID handling; no persistence testing framework is added and no hosted test command is automatic.
+- Manual-first: add a safe folder, edit its command, relaunch, and inspect retained values. Try blank command and missing/non-directory folder. No command should run, and the user's folder contents remain unchanged. For a missing registered folder, recover by removing the app entry and re-adding the correct folder rather than switching it in place. Confirm the command field is leading-aligned, cancel removal, then confirm removal and verify the folder/files remain. Use an isolated app settings copy for any corrupt-data check; do not corrupt the owner's live configuration.
 - Source proof: inspect the detail view and store implementation to confirm the native confirmation text, stable-ID save-before-memory ordering, read-only disablement, selection reconciliation, and absence of folder-deletion or folder-switch calls. The owner owns the UI walkthrough; source inspection is implementation evidence only.
 
 Completion gate: AC1 and AC18 are observable without any execution service; invalid input is recoverable and settings survive normal relaunch. The verification task remains pending until the owner performs the add/edit/relaunch/blank/remove/cancel checks.
@@ -121,9 +122,9 @@ Review boundary: real launch, per-run ownership, live output, and bounded Stop a
 
 Expected files:
 
-- `APP/ProjectRunner.swift`, `APP/RunState.swift`, `APP/LogBuffer.swift` — per-project run identity, owned process lifecycle, bounded output.
-- `APP/ShellEnvironment.swift` — minimal owner-validated shell/environment loading.
-- Optional narrow `APP/ProcessLauncher.swift` or native launch wrapper only if required for process-group control; corresponding `PROJECT` target membership.
+- `APP/Runs/ProjectRunner.swift`, `APP/Runs/RunState.swift`, `APP/Runs/LogBuffer.swift` — per-project run identity, owned process lifecycle, bounded output.
+- `APP/Runs/ShellEnvironment.swift` — minimal owner-validated shell/environment loading.
+- Optional narrow `APP/Runs/ProcessLauncher.swift` or native launch wrapper only if required for process-group control; corresponding `PROJECT` target membership.
 - Project detail/root views — Start/Stop, separate process status, live logs and visible errors.
 - `PROJECT` settings/entitlements — App Sandbox is disabled for this workflow by the approved Step 1.1 correction; no global network/TLS exceptions or privilege helpers.
 
@@ -134,27 +135,58 @@ Tasks:
 - [x] Implement graceful interrupt/terminate/kill escalation using the finite budgets above, retain ownership through launcher exit while known children remain, and never signal unrelated processes or recycled identifiers. Block duplicate Start and new runs while known cleanup is unresolved.
 - [x] Drain both pipes concurrently away from UI work, preserve stream/run identity, and keep a capped current-session log buffer with truncation feedback. Close unused stdin rather than offering terminal interaction.
 - [x] Wire real Start/Stop and errors atomically; coordinate normal app termination with owned cleanup immediately so this review boundary cannot strand live runs through ordinary Quit. Step 1.3 extends and validates the full window/restart experience.
+- [ ] Audit `POSIX_SPAWN_CLOEXEC_DEFAULT` support and use it where available, while explicitly auditing stdin/stdout/stderr and private-readiness inheritance before declaring 1.2 finished. The audit must show that only intended descriptors survive spawn and that the explicit file actions remain correct; do not claim this task complete from the current launcher alone.
+- [ ] Keep process launch/setup and blocking supervision off the main actor, while rendering and published run state remain main-actor-owned. Preserve `duplicateStart`, `pendingStartStop`, project-Remove, and Quit ownership safety across every `await`; do not allow an asynchronous handoff to forget or duplicate a run.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:
 
-- Automated: native build; proposed `RunFreshnessTests` may start here with duplicate-Start and obsolete-run-event checks using simple run IDs/state, not a fake process orchestration framework.
-- Manual: owner launches the built `.app` from Finder and starts a real `pnpm dev` project. Confirm correct directory/tool version/output without editing shell files. Start a second project and separately owned unrelated server, stop the first, and verify only its children/listeners disappear. Try another installed package-manager command or ordinary shell command, a missing executable, and an initialization failure. A short-lived launcher with a still-running ordinary child must remain safely owned rather than enabling a second run. Quit the app and observe cleanup.
+- Focused, owner-approved only: review the `ProcessLauncher` descriptor-inheritance audit and run small run-state checks for duplicate Start, Stop immediately after Start/await, pending start/Stop, active-or-stopping removal, and Quit while setup/cleanup is pending. No hosted test command is automatic and no process-orchestration harness is added.
+- Manual, owner-owned: launch the built `.app` from Finder and start a real `pnpm dev` project. Confirm correct directory/tool version/output without editing shell files. Start a second project and separately owned unrelated server, stop the first, and verify only its children/listeners disappear. Try another installed package-manager command or ordinary shell command, a missing executable, and an initialization failure. A short-lived launcher with a still-running ordinary child must remain safely owned rather than enabling a second run. Quit the app and observe cleanup. These behavior checks remain pending until the owner performs them.
 
-Completion gate: a useful Start/Stop/log loop works from a GUI launch, stdout/stderr both drain, ordinary children are covered, and unrelated-process isolation is demonstrated. If isolation or environment loading is unresolved, do not advance with an unsafe launcher.
+Completion gate: a useful Start/Stop/log loop works from a GUI launch, stdout/stderr both drain, ordinary children are covered, unrelated-process isolation is demonstrated, descriptor inheritance is audited, and actor-boundary ownership checks are focused and safe. If isolation, environment loading, descriptor inheritance, or async ownership is unresolved, do not advance with an unsafe launcher.
 Evidence location: [evidence/step-1.2.md](evidence/step-1.2.md).
+
+### Step 1.2a — Separate process supervision from main-actor UI state
+
+Requirements / acceptance: R2, R3, R4, R5; AC2, AC4, AC5, AC6, AC14 (composition and ownership safety only; no new product behavior).
+Depends on: Step 1.2 and its existing ownership/isolation gate; must complete before Step 1.3.
+Review boundary: a narrow decomposition of the existing runner so OS launch/setup, blocking supervision, and process identity checks are separate from `@MainActor` rendering/state publication. Do not introduce a framework, dependency-injection layer, protocol forest, or a mandatory `AsyncStream` product API when a simple bounded callback is sufficient.
+
+Expected files:
+
+- `APP/Runs/ProcessSupervisor.swift` — new narrow owner of off-main-actor launch/setup and blocking process supervision, using the existing launcher and bounded callbacks.
+- `APP/Runs/ProjectRunner.swift`, `APP/Runs/RunState.swift`, `APP/Runs/ProcessLauncher.swift` — existing run identity, state projection, and launch boundary adapted without changing lifecycle semantics.
+- `APP/App/AppLifecycle.swift` and existing project execution views only if needed to keep app termination, controls, and rendering on the main actor as one atomic group.
+- `TESTS/Runs/ProjectRunnerTests.swift` — optional owner-approved focused state checks only; no new test infrastructure.
+
+Tasks:
+
+- [ ] Extract the bounded process-supervision responsibility from `ProjectRunner` into `ProcessSupervisor` without changing the current process-group ownership, output, shutdown, or error contract.
+- [ ] Keep SwiftUI rendering and published state transitions on `@MainActor`; keep process launch/setup, waits, identity inspection, and blocking cleanup off-main-actor. Use the smallest callback/result boundary that preserves backpressure and cancellation.
+- [ ] Preserve `duplicateStart`, `pendingStartStop`, active-or-stopping Remove, and Quit ownership safety across `await` boundaries. A run remains owned until confirmed cleanup; stale completions cannot clear a newer run or re-enable a conflicting control.
+- [ ] Verify the decomposition as a composition change only: existing Step 1.2 isolation, output, cleanup, and app-lifetime gates remain required and no spec behavior is broadened.
+- [ ] Satisfy the verification and completion gate below, and record concise evidence.
+
+Verification:
+
+- Focused, owner-approved only: source/concurrency review plus small state checks for duplicate Start, pending Start/Stop, removal while active or stopping, Quit during setup/cleanup, and stale completion ordering. Do not run a broad suite, add a harness, or make hosted tests automatic.
+- Manual, owner-owned: repeat only the narrow Start/Stop/Quit ownership observations needed to show the decomposition preserves Step 1.2 behavior; do not claim the existing historical runtime evidence proves this refactor.
+
+Completion gate: process supervision is independently reviewable off the main actor, UI/state publication remains main-actor-owned, and all existing Step 1.2 ownership/isolation gates still pass. This step adds no user-visible behavior and remains unchecked until focused owner-approved review and manual composition checks occur.
+Evidence location: [evidence/step-1.2a.md](evidence/step-1.2a.md).
 
 ### Step 1.3 — Finish Restart, window lifetime, and failure recovery
 
 Requirements / acceptance: R3, R4, R5, R9; AC4 (Restart completion), AC5, AC6 (stress completion), AC14 (process-only cancellation; discovery cancellation in 2.2/2.3).
-Depends on: Step 1.2.
-Review boundary: lifecycle UI/AppKit integration and bounded output behavior, not website discovery.
+Depends on: Step 1.2a (and the existing Step 1.2 gate).
+Review boundary: compose Restart/window lifetime/failure recovery with the separated supervisor and main-actor state, plus bounded output behavior; not website discovery.
 
 Expected files:
 
-- `APP/ProjectRunner.swift`, `APP/RunState.swift`, `APP/LogBuffer.swift` — ordered restart, cancellation, exit reporting.
-- App entry point and `APP/AppLifecycle.swift` or existing app delegate — reopen and asynchronous termination coordination.
-- Project detail/log views; `TESTS/RunFreshnessTests.swift` — proposed small native checks for run identity and ordering.
+- `APP/Runs/ProjectRunner.swift`, `APP/Runs/RunState.swift`, `APP/Runs/LogBuffer.swift` — ordered restart, cancellation, exit reporting.
+- `APP/App/AppLifecycle.swift` or the existing app delegate — reopen and asynchronous termination coordination.
+- Existing project detail/log views; `TESTS/Runs/ProjectRunnerTests.swift` — proposed small native checks for run identity and ordering.
 
 Tasks:
 
@@ -166,13 +198,42 @@ Tasks:
 
 Verification:
 
-- Automated: native build and Product > Test for the small `RunFreshnessTests`; assert stale events cannot update the active run and a restart waits for completed cleanup. A state test does not prove OS-level process cleanup.
-- Manual: with owner-approved commands, stop during slow startup, restart repeatedly, close/reopen the window with two projects running, and Quit with a child that ignores the initial graceful signal. Inspect ports/processes for cleanup and unrelated-process survival. Run a bounded high-output command on both streams and confirm truncation notice, post-exit logs, and usable controls. Exercise visible cleanup-error handling through a narrow development-only failure injection, never by signaling unrelated processes or requiring root.
+- Focused, owner-approved only: if approved, build with the actual Xcode procedure and run the focused run-freshness checks in `TESTS/Runs/ProjectRunnerTests.swift`; assert stale events cannot update the active run and a restart waits for completed cleanup. A state test does not prove OS-level process cleanup, and no hosted test command is automatic.
+- Manual, owner-owned: with owner-approved commands, stop during slow startup, restart repeatedly, close/reopen the window with two projects running, and Quit with a child that ignores the initial graceful signal. Inspect ports/processes for cleanup and unrelated-process survival. Run a bounded high-output command on both streams and confirm truncation notice, post-exit logs, and usable controls. Exercise visible cleanup-error handling through a narrow development-only failure injection, never by signaling unrelated processes or requiring root.
 
 Completion gate: real Restart never overlaps runs, window close preserves work, ordinary Quit has finite cleanup, and heavy output does not freeze controls. Known cleanup failure blocks a misleading successful restart.
 Evidence location: [evidence/step-1.3.md](evidence/step-1.3.md).
 
-Phase exit gate **G1**: after Step 1.3 checks, build and manually compose two saved projects, concurrent logs, independent Start/Stop/Restart, window reopen, and normal Quit. Confirm no website button guesses a port yet and no unrelated listener is terminated. Record G1 in `evidence/step-1.3.md` before Phase 2 or supervised approval to advance.
+### Step 1.4 — Best-effort stale-run recovery journal
+
+Requirements / acceptance: R12; AC19.
+Depends on: Step 1.3; complete this bounded recovery increment before assessing G1 or starting Phase 2.
+Review boundary: one warning-only, best-effort startup recovery component for verified stale managed process groups. No adoption/reconnect, crash-instant cleanup, watchdog, lock, owner-identity metadata, environment marker, PTY, log archive, or concurrent-instance support.
+
+Expected files:
+
+- `APP/Runs/RunJournal.swift` — one atomic JSON Application Support journal entry per run with exactly the recovery metadata needed: `{projectID, pid, pgid, OSprocessStartTime}`.
+- Existing `APP/Runs/ProcessSupervisor.swift` or `APP/Runs/ProcessLauncher.swift` — minimal record-after-spawn and confirmed-cleanup removal calls; do not add a second process owner.
+- Existing `APP/App/AppLifecycle.swift` — minimal launch-time inspection and warning diagnostics, without turning recovery into a UI gate.
+- Optional `TESTS/Runs/RunJournalTests.swift` only if the owner explicitly approves isolated metadata fixtures; no new folder or complex harness.
+
+Tasks:
+
+- [ ] Write one journal entry atomically after spawn as soon as practical and remove it only after confirmed stop. Do not write an intent record before exec; accept the spawn-to-write window. Journal I/O failure logs the problem and never deletes project settings or stops a process that is not positively owned.
+- [ ] On launch, recover only when the PID is alive, its OS process start time matches, and the PID is still leader of the recorded positive PGID. Recheck identity immediately before SIGTERM and again before SIGKILL after a short finite wait; if still verified, escalate once. A recovery orphan is not the app's direct child and must not go through a child-only `waitpid` routine.
+- [ ] Drop dead-PID or start-time-mismatched records without signaling. Leave ambiguous permission, group, or identity cases alone with a diagnostic warning; do not silently require a UI warning. Deliberately drop a dead leader with live children rather than attempting recovery.
+- [ ] State explicitly that concurrent app instances are unsupported; do not add locking or owner-identity metadata. Keep this one bounded component and do not promise an exact line count.
+- [ ] Satisfy the verification and completion gate below, and record concise evidence.
+
+Verification:
+
+- Manual-first, owner-owned: use an owner-approved controlled start/stop/relaunch walkthrough for one managed server and inspect warning-only behavior. Use isolated metadata fixtures only if the owner approves; cover confirmed cleanup removal, dead/mismatched metadata with no signals, ambiguous metadata left alone, identity recheck before each signal, and journal I/O failure without settings loss. No automatic app launch, hosted test command, live-process recovery test, or new harness is authorized in this planning increment.
+- Optional focused check, only with explicit owner approval: exercise JSON atomicity/identity decision logic with isolated metadata fixtures. It does not prove OS signal safety or replace owner behavior checks.
+
+Completion gate: AC19 is manually reviewed as best-effort only; normal cleanup removes its entry, positive identity is required before each signal, ambiguous/stale metadata is not signaled, and all existing process ownership/lifecycle gates remain intact. Do not broaden G1 or claim guaranteed crash cleanup.
+Evidence location: [evidence/step-1.4.md](evidence/step-1.4.md).
+
+Phase exit gate **G1**: after Steps 1.2a, 1.3, and 1.4 checks, use one owner-approved Xcode build check and manually compose two saved projects, concurrent logs, independent Start/Stop/Restart, window reopen, normal Quit, and the bounded stale-run recovery review. Confirm no website button guesses a port yet and no unrelated listener is terminated. Include composition of the supervisor and recovery journal without demanding a broad suite or repeating every focused check. Record G1 in `evidence/step-1.3.md` before Phase 2 or supervised approval to advance.
 
 ## Phase 2 — Automatic current-run localhost discovery
 
@@ -200,8 +261,8 @@ Tasks:
 
 Verification:
 
-- Automated: Product > Test (or the actual derived test command from 0.1) for `LocalURLCandidateTests`. Both supplied shapes produce one local candidate; Next.js's Network line is absent; root duplicates collapse; legitimate base paths survive; false-local inputs fail.
-- Manual: review the test literals against the supplied screenshots. A passing parser test proves interpretation only, not a listening server or browser behavior.
+- Owner-approved only: if approved, use the actual Xcode procedure for `LocalURLCandidateTests`. Both supplied shapes should produce one local candidate; Next.js's Network line should be absent; root duplicates should collapse; legitimate base paths should survive; false-local inputs should fail. No Product > Test action is automatic.
+- Manual-first: review the test literals against the supplied screenshots. A passing parser check proves interpretation only, not a listening server or browser behavior.
 
 Completion gate: AC11's input policy is exercised with small native tests; candidates cannot independently enable Open or bypass ownership/readiness checks.
 Evidence location: [evidence/step-2.1.md](evidence/step-2.1.md).
@@ -216,7 +277,7 @@ Expected files:
 
 - `APP/OwnedListenerInspector.swift` — owned process-group/descendant enumeration and machine-readable TCP listener inspection.
 - `APP/SiteDiscovery.swift`, `APP/LocalSiteProbe.swift` — candidate reconciliation, local-only HTTP/HTTPS probes, cancellation.
-- Runner/state and log-consumer integration; `TESTS/RunFreshnessTests.swift` — extend only the stale-result assertions.
+- Runner/state and log-consumer integration; existing `TESTS/Runs/ProjectRunnerTests.swift` — extend only the stale-result assertions.
 
 Tasks:
 
@@ -229,8 +290,8 @@ Tasks:
 
 Verification:
 
-- Automated: native build and focused existing parser/state tests; assert an old run's successful probe cannot promote a candidate. Stub only the probe completion if necessary; do not build a fake networking platform.
-- Manual: owner approves a small disposable server command with no URL output, plus an unrelated server. Verify only the managed endpoint is detected. Exercise an announced-but-delayed endpoint, no-web command, plain non-HTTP listener, owned 404 response, and nonlocal redirect. Confirm the redirect is not fetched; review default TLS handling to ensure trust is not bypassed. Stop/restart while checks are pending and observe stale results discarded. Real trusted-HTTPS proof belongs to 2.3, after the opening UI exists; configuration review here does not claim that live acceptance.
+- Owner-approved only: use the native build and focused existing parser/state checks, if explicitly approved, to assert an old run's successful probe cannot promote a candidate. Stub only the probe completion if necessary; do not build a fake networking platform or run hosted tests automatically.
+- Manual-first: owner approves a small disposable server command with no URL output, plus an unrelated server. Verify only the managed endpoint is detected. Exercise an announced-but-delayed endpoint, no-web command, plain non-HTTP listener, owned 404 response, and nonlocal redirect. Confirm the redirect is not fetched; review default TLS handling to ensure trust is not bypassed. Stop/restart while checks are pending and observe stale results discarded. Real trusted-HTTPS proof belongs to 2.3, after the opening UI exists; configuration review here does not claim that live acceptance.
 
 Completion gate: AC10's automatic fallback works without manual URL entry; actual web responses and ownership are both required; cancellation cannot resurrect candidates. HTTPS probe code preserves default trust and advertised scheme, but real trusted-HTTPS acceptance remains explicitly incomplete until 2.3. Missing certificate access does not prevent implementing the opening UI.
 Evidence location: [evidence/step-2.2.md](evidence/step-2.2.md).
@@ -255,8 +316,8 @@ Tasks:
 
 Verification:
 
-- Automated: native build plus the small parser/state test set. No UI automation is added.
-- Manual: for each of the owner's Vite and Next.js projects, observe one local choice from the normal output and click through. Deliberately occupy its default port using an owner-controlled unrelated server, start the project, and verify the actual incremented port opens. Restart after changing availability and verify the new port, never the old unrelated listener. With a command exposing two local websites plus non-web output/listener, confirm exactly the eligible web choices. Verify no-site, delayed startup, 404, trusted HTTPS, exit, and Stop-during-probe states through the actual UI. For HTTPS, the owner supplies a local server/certificate already trusted by the system; do not install certificates or change Keychain trust implicitly. Missing trusted-HTTPS prerequisites block AC17 and this full acceptance gate, not completion of the HTTP implementation tasks. The Next.js Network URL must never appear as a choice.
+- Owner-approved only: use the native build plus the small parser/state check set if explicitly approved; no UI automation or automatic hosted test run is added.
+- Manual-first: for each of the owner's Vite and Next.js projects, observe one local choice from the normal output and click through. Deliberately occupy its default port using an owner-controlled unrelated server, start the project, and verify the actual incremented port opens. Restart after changing availability and verify the new port, never the old unrelated listener. With a command exposing two local websites plus non-web output/listener, confirm exactly the eligible web choices. Verify no-site, delayed startup, 404, trusted HTTPS, exit, and Stop-during-probe states through the actual UI. For HTTPS, the owner supplies a local server/certificate already trusted by the system; do not install certificates or change Keychain trust implicitly. Missing trusted-HTTPS prerequisites block AC17 and this full acceptance gate, not completion of the HTTP implementation tasks. The Next.js Network URL must never appear as a choice.
 
 Completion gate: real browsers receive the actual current-run local URLs; both reference servers pass dynamic-port checks; multiple-site and stale-action behavior compose with process control. Parser-only or mock-only proof is insufficient.
 Evidence location: [evidence/step-2.3.md](evidence/step-2.3.md).
@@ -271,7 +332,7 @@ Review boundary: composition/acceptance and minimal owner-driven artifact prepar
 
 ### Step 3.1 — Perform the owner's integrated MVP walkthrough
 
-Requirements / acceptance: R1–R10; AC1–AC17 by the ownership table below. AC16 artifact suitability remains in 3.2, separate from local functional proof.
+Requirements / acceptance: R1–R12; AC1–AC17 and AC19 by the ownership table below. AC16 artifact suitability remains in 3.2, separate from local functional proof.
 Depends on: Step 2.3 and G2.
 Review boundary: compact final manual acceptance and targeted fixes within this plan's scope. Material design changes require owner agreement.
 
@@ -282,17 +343,17 @@ Expected files:
 
 Tasks:
 
-- [ ] Build the native app and run the two small unit-test groups using the established Xcode procedure; do not add a broader suite as a completion condition.
-- [ ] Have the owner walk through two saved projects from Finder launch: edit command, start, inspect logs, open actual sites, restart, close/reopen the window, stop independently, and Quit. Include one occupied-port scenario, errors, and retained settings on relaunch.
-- [ ] Reconcile every acceptance ID against its owning evidence. Reuse meaningful earlier live observations rather than repeat every negative fixture; repeat lifecycle/isolation and dynamic-port checks in the final composed app. Missing real-project, trusted-HTTPS, or environment access remains visible as a blocked acceptance, never a fabricated pass.
+- [ ] Have the owner use the established Xcode build procedure once as the default compilation check; run the two small native test groups only with explicit owner approval, and do not add a broader suite as a completion condition.
+- [ ] Have the owner walk through two saved projects from Finder launch: edit command, start, inspect logs, open actual sites, restart, close/reopen the window, stop independently, and Quit. Include one occupied-port scenario, errors, retained settings on relaunch, and the Step 1.2a supervision/state composition.
+- [ ] Reconcile every acceptance ID against its owning evidence, including Step 1.4's warning-only stale-run recovery and AC19. Reuse meaningful earlier live observations rather than repeat every negative fixture; repeat lifecycle/isolation and dynamic-port checks in the final composed app. Missing real-project, trusted-HTTPS, environment, or approved recovery-fixture access remains visible as a blocked acceptance, never a fabricated pass.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence and the owner's actual feedback without claiming release approval.
 
 Verification:
 
-- Automated: native build and the focused parser/run-state tests, using the scaffold-derived procedure. This proves compilation and covered pure/state behavior, not live framework compatibility.
-- Manual: the owner performs the integrated sequence above using approved projects/ports; cross-check actual child/listener cleanup and unrelated-server survival. Confirm no project/shell file edits and no automatic command startup on relaunch. Distinguish newly observed results from links to earlier evidence.
+- Owner-approved only: use the scaffold-derived native build procedure and, if explicitly approved, the focused parser/run-state/journal checks. These prove compilation and covered pure/state behavior, not live framework compatibility; no hosted test command runs automatically.
+- Manual: the owner performs the integrated sequence above using approved projects/ports and the bounded recovery review; cross-check actual child/listener cleanup and unrelated-server survival. Confirm no project/shell file edits and no automatic command startup on relaunch. Distinguish newly observed results from links to earlier evidence.
 
-Completion gate: G3 functional acceptance requires evidence for AC1–AC15, AC17 (including live trusted HTTPS), and the runtime portion of AC16, with no unresolved process-isolation or stale-run defect. AC16's artifact/pre-sharing portion is assessed only in 3.2/G-share and does not block G3. Missing functional checks keep this verification task unchecked. A partial working HTTP demonstration may be shown to the owner without representing it as full functional or distribution acceptance.
+Completion gate: G3 functional acceptance requires evidence for AC1–AC15, AC17, AC19 (including the bounded best-effort recovery review), and the runtime portion of AC16, with no unresolved process-isolation, stale-run, or journal-ownership defect. AC16's artifact/pre-sharing portion is assessed only in 3.2/G-share and does not block G3. Missing functional or owner-approved recovery checks keep this verification task unchecked. A partial working HTTP or recovery demonstration may be shown to the owner without representing it as full functional or distribution acceptance.
 Evidence location: [evidence/step-3.1.md](evidence/step-3.1.md).
 
 ### Step 3.2 — Check a direct-distribution artifact before sharing
@@ -333,8 +394,8 @@ Each row names the owning proof, not a progress field. G3 reconciles these notes
 | AC1 | 1.1; G3 relaunch composition | Saved folder/command persist; restore never executes a command. | [step-1.1](evidence/step-1.1.md), [G3](evidence/step-3.1.md) |
 | AC2 | 1.2; G3 Finder launch | Owner's real command/toolchain works from GUI environment; both streams visible; no repository/profile modification. | [step-1.2](evidence/step-1.2.md), [G3](evidence/step-3.1.md) |
 | AC3 | 1.1 + 1.2 | Alternate installed command works; invalid folder/command/tool failure is visible and recoverable. | [step-1.1](evidence/step-1.1.md), [step-1.2](evidence/step-1.2.md) |
-| AC4 | 1.2 + 1.3; G1/G3 isolation | Stop/Restart cleans owned children before relaunch; other project and unrelated server survive. | [step-1.2](evidence/step-1.2.md), [step-1.3](evidence/step-1.3.md), [G3](evidence/step-3.1.md) |
-| AC5 | 1.3; G1/G3 lifetime | Window close preserves work; Quit performs bounded escalation and exposes cleanup failure. | [step-1.3](evidence/step-1.3.md), [G3](evidence/step-3.1.md) |
+| AC4 | 1.2 + 1.2a + 1.3; G1/G3 isolation | Stop/Restart cleans owned children before relaunch; other project and unrelated server survive; supervision/state composition preserves ownership. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [step-1.3](evidence/step-1.3.md), [G3](evidence/step-3.1.md) |
+| AC5 | 1.2a + 1.3; G1/G3 lifetime | Window close preserves work; Quit performs bounded escalation and exposes cleanup failure through the separated supervisor/state boundary. | [step-1.2a](evidence/step-1.2a.md), [step-1.3](evidence/step-1.3.md), [G3](evidence/step-3.1.md) |
 | AC6 | 1.3 | Heavy stdout/stderr stays bounded/inspectable without freezing controls. | [step-1.3](evidence/step-1.3.md) |
 | AC7 | 2.3; G2 | Real Vite produces one verified local Open action. | [step-2.3](evidence/step-2.3.md) |
 | AC8 | 2.3; G2 | Real Next.js produces one local Open action, excluding Network URL. | [step-2.3](evidence/step-2.3.md) |
@@ -343,13 +404,14 @@ Each row names the owning proof, not a progress field. G3 reconciles these notes
 | AC11 | 2.1 | Small native parser table proves local filtering, chunk/ANSI handling, and deduplication. | [step-2.1](evidence/step-2.1.md) |
 | AC12 | 2.3 | Two distinct local websites are choices; non-web listener is absent; each opens correctly. | [step-2.3](evidence/step-2.3.md) |
 | AC13 | 2.2 + 2.3 | No-web command stays manageable; delayed endpoint is not openable until responding. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
-| AC14 | 1.3 + 2.2 + 2.3 | Stop/startup and pending old probes cannot create overlapping runs or stale actions. | [step-1.3](evidence/step-1.3.md), [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
+| AC14 | 1.2a + 1.3 + 2.2 + 2.3 | Stop/startup and pending old probes cannot create overlapping runs or stale actions; async ownership remains safe across the supervision boundary. | [step-1.2a](evidence/step-1.2a.md), [step-1.3](evidence/step-1.3.md), [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC15 | 2.2 + 2.3 | Exit clears actions; 404 counts as responding; nonlocal redirects not fetched; TLS errors not bypassed. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC16 | 0.1/1.2 runtime; 3.2 G-share | Non-sandboxed current-user workflow and checked direct-distribution artifact before sharing. | [step-0.1](evidence/step-0.1.md), [step-1.2](evidence/step-1.2.md), [G-share](evidence/step-3.2.md) |
 | AC17 | 2.2 + 2.3 | Already trusted local HTTPS responds and opens as HTTPS without downgrade/trust bypass. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC18 | 1.1; G3 relaunch/removal composition | Command is leading-aligned; cancel is nonmutating; confirmed stable-ID removal changes only app settings; failed save retains entry/selection; folder/file bytes remain unchanged. | [step-1.1](evidence/step-1.1.md), [G3](evidence/step-3.1.md) |
+| AC19 | 1.4; G1/G3 recovery composition | One atomic post-spawn journal entry supports warning-only recovery only after positive PID/start-time/PGID checks; identity is rechecked before each signal; normal confirmed stop removes the entry; stale/mismatched/ambiguous records are not signaled; concurrent instances and orphan reaping are unsupported. | [step-1.4](evidence/step-1.4.md), [G1](evidence/step-1.3.md), [G3](evidence/step-3.1.md) |
 
-Final regression scope: native app build, the two focused native test groups, and the owner's integrated G3 sequence. Repeat affected focused checks for fixes; do not demand a nonexistent workspace-wide suite. Artifact proof remains a separate G-share boundary and does not imply permission to distribute.
+Final regression scope: one owner-approved native app build check, optional focused native test groups only with explicit owner approval, and the owner's integrated G3 sequence including Step 1.2a composition and Step 1.4 best-effort recovery. Repeat affected focused checks for fixes; do not demand a nonexistent workspace-wide suite or hosted-test infrastructure. Artifact proof remains a separate G-share boundary and does not imply permission to distribute.
 
 ## Rollback and recovery
 
