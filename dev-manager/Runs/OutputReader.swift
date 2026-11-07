@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// A bounded handoff between pipe queues and the main actor. At most one main-actor
@@ -75,6 +76,7 @@ final class OutputInbox: @unchecked Sendable {
 /// Reads one pipe away from the main actor and coalesces output before delivery.
 final class OutputReader: @unchecked Sendable {
     private let handle: FileHandle
+    private let descriptor: Int32
     private let stream: RunOutputStream
     private let callback: @Sendable (RunOutputStream, Data, Bool) -> Void
     private let queue: DispatchQueue
@@ -85,6 +87,7 @@ final class OutputReader: @unchecked Sendable {
 
     init(handle: FileHandle, stream: RunOutputStream, callback: @escaping @Sendable (RunOutputStream, Data, Bool) -> Void) {
         self.handle = handle
+        self.descriptor = handle.fileDescriptor
         self.stream = stream
         self.callback = callback
         self.queue = DispatchQueue(label: "dev-manager.output.\(stream.rawValue)", qos: .utility)
@@ -105,15 +108,19 @@ final class OutputReader: @unchecked Sendable {
     }
 
     private func readLoop() {
+        // A blocking POSIX read returns the bytes currently available from a pipe;
+        // FileHandle.read(upToCount:) can wait for a much larger requested read.
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
-            do {
-                let data = try handle.read(upToCount: 64 * 1024) ?? Data()
-                if data.isEmpty {
-                    finish()
-                    return
-                }
-                append(data)
-            } catch {
+            let count = buffer.withUnsafeMutableBytes { storage in
+                Darwin.read(descriptor, storage.baseAddress, storage.count)
+            }
+            if count > 0 {
+                append(Data(bytes: buffer, count: count))
+            } else if count == 0 {
+                finish()
+                return
+            } else if errno != EINTR {
                 finish()
                 return
             }

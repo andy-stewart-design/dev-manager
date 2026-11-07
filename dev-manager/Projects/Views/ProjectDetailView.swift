@@ -79,14 +79,23 @@ struct ProjectDetailView: View {
                 }
             }
 
-            if let state, !state.logs.isEmpty {
+            if let state, state.isActive || !state.logs.isEmpty {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 3) {
-                        ForEach(state.logs) { entry in
-                            Text("[\(entry.label)] \(entry.text)")
-                                .font(.system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 0) {
+                        if state.logs.isEmpty {
+                            Text("Waiting for output…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            LazyVStack(alignment: .leading, spacing: 3) {
+                                ForEach(state.logs) { entry in
+                                    Text("[\(entry.label)] \(entry.text)")
+                                        .font(.system(.caption, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
                         }
                     }
                     .padding(8)

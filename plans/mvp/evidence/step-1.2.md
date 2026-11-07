@@ -56,3 +56,20 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcodebuild -qu
 ```
 
 Exit 0; Xcode emitted a generic-destination metadata warning. No app was launched and no tests or development commands were run. App-hosted test runs are no longer automatic because they launch the host app. The owner will first validate one project through the app: Start, Running/log output, Stop, Start again, then normal Quit cleanup. Step 1.2 acceptance remains unchecked.
+
+## Live-log delivery fix
+
+- `Runs/OutputReader.swift` now uses a dedicated-queue blocking POSIX `read`, which delivers currently available pipe bytes instead of waiting on the large `FileHandle` read request; EINTR, EOF, and existing cancellation/descriptor ownership are preserved.
+- `Runs/ProjectRunner.swift` and `Runs/LogBuffer.swift` now upsert bounded unterminated output into one stream/run entry, finalize it on LF/EOF, treat CR as progress updates, and retain raw partial bytes across chunks for split UTF-8. `Projects/Views/ProjectDetailView.swift` keeps the log panel visible during an active empty run with `Waiting for output…`.
+
+## Actual check for this fix
+
+The initial unsigned Debug build exposed a SwiftUI conditional-branch inference error; wrapping those branches in `VStack` corrected it. A final incremental build from the project root succeeded (exit 0):
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcodebuild -quiet -project dev-manager.xcodeproj -scheme dev-manager -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath /tmp/dev-manager-live-log-build CODE_SIGNING_ALLOWED=NO build
+```
+
+Xcode emitted a generic-destination metadata warning. No app launches, tests, servers, or development commands were run. This proves compilation only; live streaming still requires owner observation.
+
+Owner next check: Start Astro and confirm initial logs appear while Running; trigger a code change and confirm newer logs arrive before Stop; Stop and confirm recent logs remain visible. Step 1.2 verification remains unchecked.

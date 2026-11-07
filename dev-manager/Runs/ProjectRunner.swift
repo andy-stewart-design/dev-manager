@@ -25,6 +25,7 @@ final class ProjectRunner: ObservableObject {
         var stdoutClosed = false
         var stderrClosed = false
         var partialLines: [RunOutputStream: Data] = [:]
+        var partialEntryIDs: [RunOutputStream: UUID] = [:]
         var partialLineDroppedBytes: [RunOutputStream: Int] = [:]
         var readers: [OutputReader] = []
         var outputInbox: OutputInbox?
@@ -207,6 +208,8 @@ final class ProjectRunner: ObservableObject {
         if eof {
             if let remainder = run.partialLines.removeValue(forKey: stream), !remainder.isEmpty {
                 consumeLine(remainder, stream: stream, run: run)
+            } else if let entryID = run.partialEntryIDs.removeValue(forKey: stream) {
+                _ = run.logBuffer.finishPartial(entryID: entryID)
             }
             if let dropped = run.partialLineDroppedBytes.removeValue(forKey: stream), dropped > 0 {
                 run.logBuffer.append(runID: run.runID, stream: stream, phase: run.initialized ? .command : .shellInitialization, text: "[Dev Manager truncated \(dropped) bytes from an unterminated line.]\n")
@@ -218,27 +221,93 @@ final class ProjectRunner: ObservableObject {
     }
 
     private func consume(data: Data, stream: RunOutputStream, run: ActiveRun) {
-        var bytes = Data()
-        bytes.append(run.partialLines[stream] ?? Data())
-        bytes.append(data)
-        var start = bytes.startIndex
-        while let newline = bytes[start...].firstIndex(of: 10) {
-            consumeLine(Data(bytes[start..<newline]), stream: stream, run: run)
-            start = bytes.index(after: newline)
+        var remainder = run.partialLines[stream] ?? Data()
+        var cursor = data.startIndex
+        while cursor < data.endIndex {
+            guard let delimiter = data[cursor...].firstIndex(where: { $0 == 10 || $0 == 13 }) else {
+                remainder.append(data[cursor...])
+                break
+            }
+            remainder.append(data[cursor..<delimiter])
+            if data[delimiter] == 10 {
+                if !remainder.isEmpty { publishPartial(remainder, stream: stream, run: run) }
+                if remainder.isEmpty, let entryID = run.partialEntryIDs.removeValue(forKey: stream) {
+                    _ = run.logBuffer.finishPartial(entryID: entryID)
+                } else {
+                    consumeLine(remainder, stream: stream, run: run)
+                }
+                remainder.removeAll(keepingCapacity: true)
+            } else {
+                publishPartial(remainder, stream: stream, run: run)
+                remainder.removeAll(keepingCapacity: true)
+            }
+            cursor = data.index(after: delimiter)
         }
-        var remainder = Data(bytes[start...])
+
         if remainder.count > Self.maximumIncompleteLineBytes {
             let excess = remainder.count - Self.maximumIncompleteLineBytes
             remainder = Data(remainder.suffix(Self.maximumIncompleteLineBytes))
             run.partialLineDroppedBytes[stream, default: 0] += excess
         }
         run.partialLines[stream] = remainder
+        if !remainder.isEmpty { publishPartial(remainder, stream: stream, run: run) }
+    }
+
+    private func publishPartial(_ data: Data, stream: RunOutputStream, run: ActiveRun) {
+        guard !data.isEmpty else { return }
+        let phase: RunOutputPhase = run.initialized ? .command : .shellInitialization
+        let text = partialDisplayText(data)
+        guard !text.isEmpty else { return }
+        let entryID = run.logBuffer.upsertPartial(
+            runID: run.runID,
+            stream: stream,
+            phase: phase,
+            text: text,
+            entryID: run.partialEntryIDs[stream]
+        )
+        run.partialEntryIDs[stream] = entryID
+    }
+
+    private func partialDisplayText(_ data: Data) -> String {
+        let bytes = Array(data)
+        var trailingStart = bytes.count
+        var continuationCount = 0
+        while trailingStart > 0, (bytes[trailingStart - 1] & 0xC0) == 0x80 {
+            continuationCount += 1
+            trailingStart -= 1
+        }
+
+        var validEnd = bytes.count
+        if trailingStart == 0 {
+            validEnd = 0
+        } else {
+            let lead = bytes[trailingStart - 1]
+            let expectedCount: Int
+            if lead & 0x80 == 0 { expectedCount = 0 }
+            else if lead & 0xE0 == 0xC0 { expectedCount = 1 }
+            else if lead & 0xF0 == 0xE0 { expectedCount = 2 }
+            else if lead & 0xF8 == 0xF0 { expectedCount = 3 }
+            else { expectedCount = 0 }
+            if expectedCount > continuationCount {
+                validEnd = trailingStart - 1
+            } else if expectedCount < continuationCount {
+                validEnd = trailingStart
+            }
+        }
+        return String(decoding: bytes.prefix(validEnd), as: UTF8.self)
     }
 
     private func consumeLine(_ data: Data, stream: RunOutputStream, run: ActiveRun) {
         var line = String(decoding: data, as: UTF8.self)
         if line.last == "\r" { line.removeLast() }
         let phase: RunOutputPhase = run.initialized ? .command : .shellInitialization
+        if let entryID = run.partialEntryIDs.removeValue(forKey: stream) {
+            if !run.logBuffer.finishPartial(entryID: entryID) {
+                run.logBuffer.append(runID: run.runID, stream: stream, phase: phase, text: line + "\n")
+            }
+            return
+        }
+        // A complete line that was never displayed as a partial gets one entry.
         run.logBuffer.append(runID: run.runID, stream: stream, phase: phase, text: line + "\n")
     }
 

@@ -30,11 +30,19 @@ enum RunOutputPhase: String, Sendable {
 }
 
 struct RunLogEntry: Identifiable, Equatable, Sendable {
-    let id = UUID()
+    let id: UUID
     let runID: UUID
     let stream: RunOutputStream
     let phase: RunOutputPhase
     let text: String
+
+    init(id: UUID = UUID(), runID: UUID, stream: RunOutputStream, phase: RunOutputPhase, text: String) {
+        self.id = id
+        self.runID = runID
+        self.stream = stream
+        self.phase = phase
+        self.text = text
+    }
 
     var label: String {
         "\(runID.uuidString.prefix(8)) \(stream.rawValue)/\(phase.rawValue)"
