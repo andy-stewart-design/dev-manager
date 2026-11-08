@@ -73,3 +73,22 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcodebuild -qu
 Xcode emitted a generic-destination metadata warning. No app launches, tests, servers, or development commands were run. This proves compilation only; live streaming still requires owner observation.
 
 Owner next check: Start Astro and confirm initial logs appear while Running; trigger a code change and confirm newer logs arrive before Stop; Stop and confirm recent logs remain visible. Step 1.2 verification remains unchecked.
+
+## Approved Step 1.2 follow-ups completed
+
+- `Runs/ProcessLauncher.swift`: added `POSIX_SPAWN_CLOEXEC_DEFAULT`. The existing explicit `dup2` actions continue to inherit only stdin, stdout, stderr, and the private readiness descriptor; their target descriptors clear close-on-exec, while source descriptors and all other parent descriptors remain closed. Existing zsh multi-digit readiness close, positional command, checked spawn cleanup, process-group/signal flags, and cwd action are unchanged.
+- `Runs/ProjectRunner.swift` / `Runs/RunState.swift`: reserved a run ID and active ownership state before detached environment/spawn work. Pending runs participate in authoritative Start/Stop/Remove/Quit checks. Stop and Quit cancel pending setup, await launch settlement, and clean any process that is created before cancellation; cleanup retains ownership until the existing output and group barriers finish.
+- `Runs/ShellEnvironment.swift` and `Projects/Project.swift`: marked the environment factory and folder URL projection nonisolated so the detached launch boundary is explicit and buildable.
+- `plans/mvp/plan.md`: checked only the two approved Step 1.2 follow-up implementation tasks. The Step 1.2 verification/completion gate remains unchecked; Step 1.2a/1.3/1.4 were not changed.
+
+### Verification for this follow-up
+
+Command run once, then one incremental recheck after a quick compile fix:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcodebuild -quiet -project dev-manager.xcodeproj -scheme dev-manager -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath /tmp/dev-manager-step12-followup CODE_SIGNING_ALLOWED=NO build
+```
+
+Initial compile reported actor-isolation diagnostics for the detached launch boundary; marking the existing pure environment/folder projections `nonisolated` corrected it. The single incremental recheck used the same command and exited 0 (Xcode emitted only its generic-destination metadata warning). No app launch, tests, hosted tests, development command, listener, or process smoke test was run.
+
+Owner manual checklist still pending: Finder launch; one real project Start/Stop/Start; Stop during pending startup; duplicate Start while pending; project Remove during pending/stopping; Quit during pending startup and during cleanup; two-project and unrelated-server isolation; descriptor-leak observation. Earlier owner confirmation covers only the readiness-FD close fix and improved live streaming, not these follow-up behaviors. Final Step 1.2 verification remains **unchecked**.

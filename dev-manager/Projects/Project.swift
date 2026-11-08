@@ -20,7 +20,7 @@ struct Project: Identifiable, Codable, Equatable, Sendable {
         self.command = command
     }
 
-    var folderURL: URL {
+    nonisolated var folderURL: URL {
         URL(fileURLWithPath: folderPath, isDirectory: true)
     }
 

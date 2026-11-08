@@ -14,7 +14,7 @@ final class ProjectRunner: ObservableObject {
     private final class ActiveRun {
         let projectID: UUID
         let runID: UUID
-        let identity: ProcessIdentity
+        var identity: ProcessIdentity?
         let logBuffer = LogBuffer()
         var phase: RunPhase = .launching
         var message: String? = "Initializing zsh login/interactive environment…"
@@ -30,14 +30,14 @@ final class ProjectRunner: ObservableObject {
         var readers: [OutputReader] = []
         var outputInbox: OutputInbox?
         var initializationTask: Task<Void, Never>?
+        var launchTask: Task<Void, Never>?
         var cleanupTask: Task<StopResult, Never>?
         var exit: ProcessExit?
         var stopRequested = false
 
-        init(projectID: UUID, runID: UUID, process: SpawnedProcess) {
+        init(projectID: UUID, runID: UUID) {
             self.projectID = projectID
             self.runID = runID
-            self.identity = ProcessIdentity(processID: process.processID, processGroupID: process.processGroupID)
         }
     }
 
@@ -80,42 +80,97 @@ final class ProjectRunner: ObservableObject {
 
         do {
             try Project.validate(folderURL: project.folderURL, command: project.command)
-            let environment = try configuredShellEnvironment ?? ShellEnvironment.currentZsh()
-            let runID = UUID()
-            let process = try ProcessLauncher.spawn(shell: environment, folder: project.folderURL, command: project.command)
-            let run = ActiveRun(projectID: project.id, runID: runID, process: process)
-            activeRuns[project.id] = run
-            states[project.id] = RunState.initial(runID: runID, processID: process.processID, processGroupID: process.processGroupID)
-
-            let inbox = OutputInbox { [weak self] stream, data, eof, droppedBytes in
-                self?.receive(data: data, stream: stream, eof: eof, droppedBytes: droppedBytes, projectID: project.id, runID: runID)
-            }
-            run.outputInbox = inbox
-            let stdoutReader = OutputReader(handle: process.stdout, stream: .stdout) { stream, data, eof in
-                inbox.enqueue(stream: stream, data: data, eof: eof)
-            }
-            let stderrReader = OutputReader(handle: process.stderr, stream: .stderr) { stream, data, eof in
-                inbox.enqueue(stream: stream, data: data, eof: eof)
-            }
-            run.readers = [stdoutReader, stderrReader]
-
-            Task.detached(priority: .utility) { [weak self] in
-                switch ProcessLauncher.waitForExitObservation(processID: process.processID) {
-                case .success:
-                    await self?.launcherExited(projectID: project.id, runID: runID, exit: nil, error: nil)
-                case let .failure(error):
-                    await self?.launcherExited(projectID: project.id, runID: runID, exit: nil, error: error)
-                }
-            }
-            run.initializationTask = Task.detached(priority: .utility) { [weak self] in
-                let ready = ProcessLauncher.waitForReady(process.ready, timeout: 10)
-                await self?.readyObserved(ready, projectID: project.id, runID: runID)
-            }
-            return runID
         } catch {
             let runID = UUID()
             states[project.id] = RunState(id: runID, processID: nil, processGroupID: nil, phase: .failed, logs: [], didTruncateLogs: false, message: actionableMessage(for: error), cleanupError: nil)
             return nil
+        }
+
+        // Reserve ownership and publish the pending identity before any potentially
+        // blocking environment/spawn work leaves the main actor. Stop, Remove, and
+        // Quit therefore observe this run immediately and cannot race a second start.
+        let runID = UUID()
+        let run = ActiveRun(projectID: project.id, runID: runID)
+        activeRuns[project.id] = run
+        states[project.id] = RunState.pending(runID: runID, message: run.message)
+        publish(run)
+
+        let configuredShellEnvironment = self.configuredShellEnvironment
+        run.launchTask = Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                if Task.isCancelled {
+                    await self?.launchCompleted(process: nil, project: project, runID: runID, error: CancellationError())
+                    return
+                }
+                let environment = try configuredShellEnvironment ?? ShellEnvironment.currentZsh()
+                if Task.isCancelled {
+                    await self?.launchCompleted(process: nil, project: project, runID: runID, error: CancellationError())
+                    return
+                }
+                let process = try ProcessLauncher.spawn(shell: environment, folder: project.folderURL, command: project.command)
+                await self?.launchCompleted(process: process, project: project, runID: runID, error: nil)
+            } catch {
+                await self?.launchCompleted(process: nil, project: project, runID: runID, error: error)
+            }
+        }
+        return runID
+    }
+
+    private func launchCompleted(process: SpawnedProcess?, project: Project, runID: UUID, error: Error?) {
+        guard let run = activeRuns[project.id], run.runID == runID else {
+            // A run is normally retained until this callback. If that invariant is
+            // ever broken after a successful spawn, clean only the created identity.
+            if let process {
+                _ = ProcessLauncher.stop(identity: ProcessIdentity(processID: process.processID, processGroupID: process.processGroupID))
+            }
+            return
+        }
+
+        guard let process else {
+            run.launcherExited = true
+            run.cleanupCompleted = true
+            run.stdoutClosed = true
+            run.stderrClosed = true
+            run.phase = run.stopRequested ? .exited : .failed
+            run.message = run.stopRequested ? "Start cancelled before a process was launched." : actionableMessage(for: error ?? CancellationError())
+            publish(run)
+            finalizeIfReady(run)
+            return
+        }
+
+        run.identity = ProcessIdentity(processID: process.processID, processGroupID: process.processGroupID)
+        let inbox = OutputInbox { [weak self] stream, data, eof, droppedBytes in
+            self?.receive(data: data, stream: stream, eof: eof, droppedBytes: droppedBytes, projectID: project.id, runID: runID)
+        }
+        run.outputInbox = inbox
+        let stdoutReader = OutputReader(handle: process.stdout, stream: .stdout) { stream, data, eof in
+            inbox.enqueue(stream: stream, data: data, eof: eof)
+        }
+        let stderrReader = OutputReader(handle: process.stderr, stream: .stderr) { stream, data, eof in
+            inbox.enqueue(stream: stream, data: data, eof: eof)
+        }
+        run.readers = [stdoutReader, stderrReader]
+        publish(run)
+
+        Task.detached(priority: .utility) { [weak self] in
+            switch ProcessLauncher.waitForExitObservation(processID: process.processID) {
+            case .success:
+                await self?.launcherExited(projectID: project.id, runID: runID, exit: nil, error: nil)
+            case let .failure(error):
+                await self?.launcherExited(projectID: project.id, runID: runID, exit: nil, error: error)
+            }
+        }
+
+        if run.stopRequested {
+            run.phase = .stopping
+            run.message = "Stopping the process group requested during launch…"
+            publish(run)
+            _ = beginCleanup(run)
+        } else {
+            run.initializationTask = Task.detached(priority: .utility) { [weak self] in
+                let ready = ProcessLauncher.waitForReady(process.ready, timeout: 10)
+                await self?.readyObserved(ready, projectID: project.id, runID: runID)
+            }
         }
     }
 
@@ -123,10 +178,11 @@ final class ProjectRunner: ObservableObject {
         guard let run = activeRuns[projectID] else { return }
         run.stopRequested = true
         run.phase = .stopping
-        run.message = "Stopping owned process group \(run.identity.processGroupID)…"
+        run.message = run.identity.map { "Stopping owned process group \($0.processGroupID)…" } ?? "Cancelling pending launch…"
         run.initializationTask?.cancel()
+        run.launchTask?.cancel()
         publish(run)
-        let task = beginCleanup(run)
+        guard let task = beginCleanup(run) else { return }
         Task { @MainActor [weak self] in
             let result = await task.value
             self?.apply(stopResult: result, projectID: run.projectID, runID: run.runID)
@@ -137,14 +193,31 @@ final class ProjectRunner: ObservableObject {
     /// explicitly detached; the main actor only coordinates state and completion.
     func stopAll() async -> Bool {
         let runs = Array(activeRuns.values)
-        var work: [(ActiveRun, Task<StopResult, Never>)] = []
         for run in runs {
             run.stopRequested = true
             run.phase = .stopping
             run.message = "Stopping for application quit…"
             run.initializationTask?.cancel()
+            run.launchTask?.cancel()
             publish(run)
-            work.append((run, beginCleanup(run)))
+        }
+
+        // A pending launch must settle first. If it produces a process despite the
+        // cancellation request, launchCompleted immediately transfers ownership to
+        // the same cleanup path used by an already-running command.
+        await withTaskGroup(of: Void.self) { group in
+            for run in runs {
+                if let launchTask = run.launchTask {
+                    group.addTask { await launchTask.value }
+                }
+            }
+        }
+
+        var work: [(ActiveRun, Task<StopResult, Never>)] = []
+        for run in runs {
+            if let task = beginCleanup(run) {
+                work.append((run, task))
+            }
         }
 
         var allSucceeded = true
@@ -162,10 +235,11 @@ final class ProjectRunner: ObservableObject {
         return allSucceeded && activeRuns.isEmpty
     }
 
-    private func beginCleanup(_ run: ActiveRun) -> Task<StopResult, Never> {
+    private func beginCleanup(_ run: ActiveRun) -> Task<StopResult, Never>? {
         if let task = run.cleanupTask { return task }
+        guard let identity = run.identity else { return nil }
         let task = Task.detached(priority: .userInitiated) {
-            ProcessLauncher.stop(identity: run.identity)
+            ProcessLauncher.stop(identity: identity)
         }
         run.cleanupTask = task
         Task { @MainActor [weak self] in
@@ -365,7 +439,7 @@ final class ProjectRunner: ObservableObject {
 
     private func publish(_ run: ActiveRun) {
         let snapshot = run.logBuffer.snapshot()
-        states[run.projectID] = RunState(id: run.runID, processID: run.identity.processID, processGroupID: run.identity.processGroupID, phase: run.phase, logs: snapshot.0, didTruncateLogs: snapshot.1, message: run.message, cleanupError: run.cleanupError)
+        states[run.projectID] = RunState(id: run.runID, processID: run.identity?.processID, processGroupID: run.identity?.processGroupID, phase: run.phase, logs: snapshot.0, didTruncateLogs: snapshot.1, message: run.message, cleanupError: run.cleanupError)
     }
 
     private func actionableMessage(for error: Error) -> String {

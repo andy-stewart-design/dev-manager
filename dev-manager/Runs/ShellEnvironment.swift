@@ -4,7 +4,7 @@ struct ShellEnvironment: Sendable {
     let shellURL: URL
     let environment: [String: String]
 
-    static func currentZsh(homeDirectory: URL? = nil, zdotdir: URL? = nil) throws -> ShellEnvironment {
+    nonisolated static func currentZsh(homeDirectory: URL? = nil, zdotdir: URL? = nil) throws -> ShellEnvironment {
         let shellURL = URL(fileURLWithPath: "/bin/zsh")
         guard FileManager.default.isExecutableFile(atPath: shellURL.path) else {
             throw ShellEnvironmentError.unsupportedShell("/bin/zsh is not available on this Mac.")

@@ -78,4 +78,17 @@ struct RunState: Identifiable, Equatable, Sendable {
             cleanupError: nil
         )
     }
+
+    static func pending(runID: UUID, message: String?) -> RunState {
+        RunState(
+            id: runID,
+            processID: nil,
+            processGroupID: nil,
+            phase: .launching,
+            logs: [],
+            didTruncateLogs: false,
+            message: message,
+            cleanupError: nil
+        )
+    }
 }

@@ -126,7 +126,10 @@ enum ProcessLauncher {
             close(ready.read); close(ready.write); close(handshakeSource)
         }
 
-        let groupFlags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_RESETIDS | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)
+        // Start closed by default: only the explicit dup2 targets below survive.
+        // POSIX dup2 actions clear close-on-exec on stdin/stdout/stderr and the
+        // private readiness target, while every unrelated parent descriptor stays closed.
+        let groupFlags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_RESETIDS | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)
         guard posix_spawnattr_setflags(&attributes, groupFlags) == 0,
               posix_spawnattr_setpgroup(&attributes, 0) == 0 else {
             closeCreatedDescriptors()
