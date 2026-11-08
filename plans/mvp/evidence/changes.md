@@ -1,5 +1,9 @@
 # Agreed planning changes
 
+## Step 1.2a responsibility split
+
+The owner approved “ok, let's do 1.2a” after the proposed split explicitly assigned log reading/decoding/partial-line assembly to the existing log components. The step's expected files now include `Runs/LogBuffer.swift`, where `RunOutputAccumulator` was extracted. This is part of that approved behavior-preserving decomposition, not new product scope. Implementation checkboxes reflect performed source work; manual composition checks remain unchecked in the plan and pending in `step-1.2a.md`.
+
 ## Minimum macOS version
 
 - Change: set the app and native unit-test minimum deployment targets to macOS 15.0 (Sequoia), replacing the previously unspecified target in the spec/plan. No macOS 14 compatibility work is planned.

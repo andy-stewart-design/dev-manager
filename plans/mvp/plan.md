@@ -156,17 +156,17 @@ Review boundary: a narrow decomposition of the existing runner so OS launch/setu
 Expected files:
 
 - `APP/Runs/ProcessSupervisor.swift` — new narrow owner of off-main-actor launch/setup and blocking process supervision, using the existing launcher and bounded callbacks.
-- `APP/Runs/ProjectRunner.swift`, `APP/Runs/RunState.swift`, `APP/Runs/ProcessLauncher.swift` — existing run identity, state projection, and launch boundary adapted without changing lifecycle semantics.
+- `APP/Runs/ProjectRunner.swift`, `APP/Runs/RunState.swift`, `APP/Runs/ProcessLauncher.swift`, `APP/Runs/LogBuffer.swift` — existing run identity, UI projection, launch boundary, and extracted log assembly adapted without changing lifecycle semantics.
 - `APP/App/AppLifecycle.swift` and existing project execution views only if needed to keep app termination, controls, and rendering on the main actor as one atomic group.
 - `TESTS/Runs/ProjectRunnerTests.swift` — optional owner-approved focused state checks only; no new test infrastructure.
 
 Tasks:
 
-- [ ] Extract the bounded process-supervision responsibility from `ProjectRunner` into `ProcessSupervisor` without changing the current process-group ownership, output, shutdown, or error contract.
-- [ ] Keep SwiftUI rendering and published state transitions on `@MainActor`; keep process launch/setup, waits, identity inspection, and blocking cleanup off-main-actor. Use the smallest callback/result boundary that preserves backpressure and cancellation.
-- [ ] Preserve `duplicateStart`, `pendingStartStop`, active-or-stopping Remove, and Quit ownership safety across `await` boundaries. A run remains owned until confirmed cleanup; stale completions cannot clear a newer run or re-enable a conflicting control.
-- [ ] Verify the decomposition as a composition change only: existing Step 1.2 isolation, output, cleanup, and app-lifetime gates remain required and no spec behavior is broadened.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence.
+- [x] Extract the bounded process-supervision responsibility from `ProjectRunner` into `ProcessSupervisor` without changing the current process-group ownership, output, shutdown, or error contract.
+- [x] Keep SwiftUI rendering and published state transitions on `@MainActor`; keep process launch/setup, waits, identity inspection, and blocking cleanup off-main-actor. Use the smallest callback/result boundary that preserves backpressure and cancellation.
+- [x] Preserve `duplicateStart`, `pendingStartStop`, active-or-stopping Remove, and Quit ownership safety across `await` boundaries. A run remains owned until confirmed cleanup; stale completions cannot clear a newer run or re-enable a conflicting control.
+- [x] Verify the decomposition as a composition change only: existing Step 1.2 isolation, output, cleanup, and app-lifetime gates remain required and no spec behavior is broadened.
+- [x] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:
 
