@@ -1,5 +1,11 @@
 import Foundation
 
+nonisolated enum WebsiteOpeningPreparation: Sendable {
+    case ready
+    case cancelled
+    case failed(String)
+}
+
 @MainActor
 final class ProcessSupervisor {
     private let configuredShellEnvironment: ShellEnvironment?
@@ -20,6 +26,8 @@ final class ProcessSupervisor {
         var cleanupError: String?
         var siteDiscoveryState: SiteDiscoveryState = .inactive
         var siteDiscovery: SiteDiscoveryCoordinator?
+        var isOpeningWebsite = false
+        var siteActionError: String?
         var initialized = false
         var launcherExited = false
         var cleanupCompleted = false
@@ -170,6 +178,7 @@ final class ProcessSupervisor {
 
     func stop(projectID: UUID) {
         guard let run = activeRuns[projectID] else { return }
+        run.isOpeningWebsite = false
         run.stopRequested = true
         run.siteDiscovery?.cancel()
         run.phase = .stopping
@@ -189,6 +198,7 @@ final class ProcessSupervisor {
     func stopAll() async -> Bool {
         let runs = Array(activeRuns.values)
         for run in runs {
+            run.isOpeningWebsite = false
             run.stopRequested = true
             run.siteDiscovery?.cancel()
             run.phase = .stopping
@@ -346,9 +356,52 @@ final class ProcessSupervisor {
         return "Command exited."
     }
 
+    /// Validate a browser target without opening it. The coordinator performs a
+    /// fresh, read-only ownership scan; it never probes the URL again after the
+    /// startup verification already recorded in site discovery.
+    func prepareWebsiteOpening(projectID: UUID, runID: UUID, site: LocalSite) async -> WebsiteOpeningPreparation {
+        guard let run = activeRuns[projectID], run.runID == runID,
+              run.phase == .running, !run.stopRequested,
+              run.siteDiscoveryState.phase == .responding,
+              run.siteDiscoveryState.sites.contains(site), !run.isOpeningWebsite,
+              let discovery = run.siteDiscovery else { return .cancelled }
+
+        run.isOpeningWebsite = true
+        run.siteActionError = nil
+        publish(run)
+
+        let validation = await discovery.validateFreshURLOwnership(site)
+        guard let current = activeRuns[projectID], current.runID == runID,
+              current.phase == .running, !current.stopRequested else {
+            return .cancelled
+        }
+        switch validation {
+        case .valid:
+            return .ready
+        case let .invalid(message):
+            current.isOpeningWebsite = false
+            current.siteActionError = message
+            publish(current)
+            return .failed(message)
+        case .cancelled:
+            current.isOpeningWebsite = false
+            publish(current)
+            return .cancelled
+        }
+    }
+
+    func finishWebsiteOpening(projectID: UUID, runID: UUID, error: String?) {
+        guard let run = activeRuns[projectID], run.runID == runID else { return }
+        run.isOpeningWebsite = false
+        if let error, run.phase == .running, !run.stopRequested {
+            run.siteActionError = error
+        }
+        publish(run)
+    }
+
     private func publish(_ run: ActiveRun) {
         let snapshot = run.logBuffer.snapshot()
-        stateHandler(run.projectID, RunState(id: run.runID, processID: run.identity?.processID, processGroupID: run.identity?.processGroupID, phase: run.phase, logs: snapshot.0, didTruncateLogs: snapshot.1, message: run.message, cleanupError: run.cleanupError, siteState: run.siteDiscoveryState))
+        stateHandler(run.projectID, RunState(id: run.runID, processID: run.identity?.processID, processGroupID: run.identity?.processGroupID, phase: run.phase, logs: snapshot.0, didTruncateLogs: snapshot.1, message: run.message, cleanupError: run.cleanupError, siteState: run.siteDiscoveryState, isOpeningWebsite: run.isOpeningWebsite, siteActionError: run.siteActionError))
     }
 
     private func actionableMessage(for error: Error) -> String {

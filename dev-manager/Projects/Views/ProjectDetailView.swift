@@ -26,7 +26,15 @@ struct ProjectDetailView: View {
 
             executionSection
 
-            SiteStatusView(state: runner.state(for: project.id)?.siteState ?? .inactive)
+            let runState = runner.state(for: project.id)
+            SiteStatusView(
+                state: runState?.siteState ?? .inactive,
+                isOpeningWebsite: runState?.isOpeningWebsite ?? false,
+                siteActionError: runState?.siteActionError,
+                onOpen: { site in
+                    Task { await runner.openWebsite(projectID: project.id, site: site) }
+                }
+            )
 
             Section {
                 Button("Remove Project…", role: .destructive) {

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -51,6 +52,39 @@ final class ProjectRunner: ObservableObject {
     }
 
     func stop(projectID: UUID) { supervisor.stop(projectID: projectID) }
+
+    /// The view supplies only the currently displayed ready site. All freshness,
+    /// ownership, and run-identity checks happen again in the facade/supervisor
+    /// before this synchronous AppKit call.
+    func openWebsite(projectID: UUID, site: LocalSite) async {
+        guard !isTerminating,
+              let initial = states[projectID], initial.phase == .running,
+              initial.siteState.phase == .responding,
+              initial.siteState.sites.contains(site), !initial.isOpeningWebsite else { return }
+        let runID = initial.id
+        let preparation = await supervisor.prepareWebsiteOpening(projectID: projectID, runID: runID, site: site)
+        guard case .ready = preparation else {
+            supervisor.finishWebsiteOpening(projectID: projectID, runID: runID, error: nil)
+            return
+        }
+
+        // No await occurs between this last current-run check and NSWorkspace.
+        guard !isTerminating,
+              let current = states[projectID], current.id == runID,
+              current.phase == .running, current.isOpeningWebsite,
+              current.siteState.phase == .responding,
+              current.siteState.sites.contains(site) else {
+            supervisor.finishWebsiteOpening(projectID: projectID, runID: runID, error: nil)
+            return
+        }
+        let opened = NSWorkspace.shared.open(site.candidate.url)
+        supervisor.finishWebsiteOpening(
+            projectID: projectID,
+            runID: runID,
+            error: opened ? nil : "The default browser could not open \(site.candidate.absoluteString)."
+        )
+    }
+
     func stopAll() async -> Bool { await supervisor.stopAll() }
 }
 

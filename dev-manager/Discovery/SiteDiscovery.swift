@@ -3,6 +3,12 @@ import Foundation
 /// Per-run coordinator for output candidates, owned listeners, and bounded HTTP
 /// probes. It is main-actor owned only for its small value state; all blocking
 /// listener inspection is performed by a cancellable detached task.
+nonisolated enum FreshURLOwnershipValidation: Sendable {
+    case valid
+    case invalid(String)
+    case cancelled
+}
+
 @MainActor
 final class SiteDiscoveryCoordinator {
     private struct Target: Sendable {
@@ -54,6 +60,32 @@ final class SiteDiscoveryCoordinator {
     func finish(_ stream: RunOutputStream) {
         guard !isInactive else { return }
         candidates.formUnion(parser.finish(stream))
+    }
+
+    /// Revalidate the exact ready URL and complete owner identity immediately
+    /// before a browser action. This is listener/process inspection only; the
+    /// startup HTTP verification is intentionally not repeated here.
+    func validateFreshURLOwnership(_ site: LocalSite) async -> FreshURLOwnershipValidation {
+        guard !isInactive, let listener = site.listener else {
+            return .invalid("This website no longer has an owned listener.")
+        }
+        do {
+            let inspection = try await inspectOwnedListeners()
+            guard !Task.isCancelled, !isInactive else { return .cancelled }
+            guard let current = inspection.listeners.first(where: { $0 == listener }),
+                  current.matches(site.candidate),
+                  OwnedListenerInspector.revalidate(listener: current) else {
+                return .invalid("The website's owned listener changed before it could be opened. Retry after the current run is ready.")
+            }
+            return .valid
+        } catch is CancellationError {
+            return .cancelled
+        } catch let error as OwnedListenerInspectionError {
+            if case .cancelled = error { return .cancelled }
+            return .invalid("Could not verify website ownership before opening: \(error.localizedDescription)")
+        } catch {
+            return .invalid("Could not verify website ownership before opening: \(error.localizedDescription)")
+        }
     }
 
     func startScanning() {

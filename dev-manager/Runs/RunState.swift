@@ -59,10 +59,13 @@ struct RunState: Identifiable, Equatable, Sendable {
     let message: String?
     let cleanupError: String?
     let siteState: SiteDiscoveryState
+    let isOpeningWebsite: Bool
+    let siteActionError: String?
 
     init(id: UUID, processID: Int32?, processGroupID: Int32?, phase: RunPhase,
          logs: [RunLogEntry], didTruncateLogs: Bool, message: String?, cleanupError: String?,
-         siteState: SiteDiscoveryState = .inactive) {
+         siteState: SiteDiscoveryState = .inactive, isOpeningWebsite: Bool = false,
+         siteActionError: String? = nil) {
         self.id = id
         self.processID = processID
         self.processGroupID = processGroupID
@@ -72,6 +75,8 @@ struct RunState: Identifiable, Equatable, Sendable {
         self.message = message
         self.cleanupError = cleanupError
         self.siteState = siteState
+        self.isOpeningWebsite = isOpeningWebsite
+        self.siteActionError = siteActionError
     }
 
     var isActive: Bool {

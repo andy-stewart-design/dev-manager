@@ -284,8 +284,8 @@ Expected files:
 
 Tasks:
 
-- [ ] Show process lifecycle and website discovery separately. Enable one Open action for one responding website, URL-labeled choices for multiple distinct websites, and informative no-site/probe errors without marking a running command failed.
-- [ ] Open the selected current-run URL in the default browser. Recheck run validity at action time; clear choices immediately on Stop/exit/subsequent Start and report browser-open failures without changing the process.
+- [x] Show process lifecycle and website discovery separately. Enable one Open action for one responding website, URL-labeled choices for multiple distinct websites, and informative no-site/probe errors without marking a running command failed.
+- [x] Open the selected current-run URL in the default browser. Recheck run validity at action time; clear choices immediately on Stop/exit/subsequent Start and report browser-open failures without changing the process.
 - [ ] With the owner, validate real Vite/Next.js startup and port rollover, plus one multi-site command. Use exact observed URLs rather than a saved/default port; retain only localhost/loopback choices.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
 
