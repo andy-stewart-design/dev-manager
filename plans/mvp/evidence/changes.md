@@ -79,3 +79,9 @@ The owner approved “ok, let's do 1.2a” after the proposed split explicitly a
 - User approval recorded for the narrow behavior: probe until the site first responds, stop HTTP polling once startup-ready, clear the per-run cache on Stop/exit/new run, and probe again only for a new URL/port or changed owned listener identity.
 - Implementation uses small per-run coordinator dictionaries keyed by exact URL and full `LocalSiteListener` identity (PID, OS start time, process group, and listener port). It retains bounded listener/announcement scanning and ownership revalidation, without adding a persistent cache, service, registry, watcher, dependency, or process behavior.
 - R8/spec wording is narrowly clarified: readiness is startup verification, not continuous health monitoring. Existing IDs, gates, and task boundaries remain unchanged; the final 2.2 manual verification is still pending and no owner result is claimed.
+
+## Explicit approval: Step 2.3 layout refinement
+
+- Actual user approval: the owner explicitly requested the approved layout update grouping ready-site status and browser controls in the existing `Execution` section, moving terminal output to its own `Output` section, and preserving all existing process/discovery behavior.
+- Implementation is limited to `Projects/Views/ProjectDetailView.swift`, `Discovery/Views/SiteStatusView.swift`, and the small `Projects/Views/ProjectOutputView.swift` extraction, plus the Step 2.3 evidence and expected-file note. No new requirement/acceptance ID, status pass, network check, browser behavior, or process behavior was added.
+- Owner visual review remains pending for grouping, narrow-window layout, and multisite behavior; existing Step 2.3 checkboxes and G2 gate remain unchanged.

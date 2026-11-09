@@ -279,7 +279,9 @@ Review boundary: user-visible website states/browser choices composed with the r
 
 Expected files:
 
-- Project detail/root views or `APP/SiteActionsView.swift` — distinct website status, single/multiple Open actions, URL labels.
+- `APP/Projects/Views/ProjectDetailView.swift` — parent-owned Project, Execution, and Output section boundaries.
+- `APP/Discovery/Views/SiteStatusView.swift` — website status/action row content within Execution, including single/multiple URL choices.
+- `APP/Projects/Views/ProjectOutputView.swift` — bounded terminal output rendering within the parent-owned Output section.
 - Run/discovery state integration — last-moment run validity check and default-browser opening via native macOS API.
 
 Tasks:

@@ -1,18 +1,14 @@
 # Step 2.3 — Open the correct local site
 
-## Implementation completed
+## Approved layout implementation
 
-- `dev-manager/Discovery/Views/SiteStatusView.swift` now shows one URL-labeled `Open in Browser` action for one ready local site and a URL-labeled menu for multiple sites; no arbitrary primary is selected.
-- `dev-manager/Projects/Views/ProjectDetailView.swift` passes website actions through `ProjectRunner` while preserving the existing command editor, lifecycle controls, logs, and local-only status layout.
-- `dev-manager/Runs/ProjectRunner.swift`, `ProcessSupervisor.swift`, and `RunState.swift` add a narrow per-project opening state/error surface and final current-run checks before `NSWorkspace.shared.open`.
-- `dev-manager/Discovery/SiteDiscovery.swift` adds fresh, read-only owned-listener/full-identity validation for the exact ready candidate. It does not issue a new HTTP probe or follow redirects. Stop/exit/run identity changes prevent opening; browser-open failure is visible without changing process state.
+- `dev-manager/Projects/Views/ProjectDetailView.swift` owns the `Execution` and `Output` section boundaries. Site status and browser actions are grouped in `Execution`; terminal output remains its own `Output` section.
+- `dev-manager/Discovery/Views/SiteStatusView.swift` is row content rather than a nested `Local Site` section. Ready now reuses the running-row system-image indicator sizing/spacing, keeps the green label, places the caption URL inline with middle truncation/help, and retains the right-aligned blue browser control and multisite URL menu. Existing discovering, no-site, diagnostic, opening, and browser-error states remain represented.
+- `dev-manager/Projects/Views/ProjectOutputView.swift` preserves the existing waiting placeholder, bounded scroll area, monospace selectable logs, truncation notice, cleanup error, and visibility while active/after Stop.
 
 ## Verification
 
-- Build command (owner-specified, no app launch):
-  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -quiet -project dev-manager.xcodeproj -scheme dev-manager -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath /tmp/dev-manager-2.3-build CODE_SIGNING_ALLOWED=NO build`
-- Result: succeeded (exit status 0). Xcode emitted only its generic macOS placeholder destination diagnostic.
-- Owner accepted the core browser workflow: after the requested Vite/Next/Astro opening, delayed readiness, occupied-port, and Stop-action walkthrough, the owner replied, “Yep, that seems to be working great.” Recorded as positive owner acceptance of that handoff, not as scenario-by-scenario diagnostic results. No additional live multi-site, trusted-HTTPS, no-site/404, silent-server fallback, or Stop-during-opening observations were separately reported. Those cases remain unverified; no installs or trust changes were made.
-- UI automation, hosted tests, native tests, app/browser launches, listeners, and HTTP requests were not run.
-
-The core owner walkthrough is accepted. The full Step 2.3 completion gate and G2 remain unchecked for the additional cases not reported above; no unperformed checks are marked passed.
+- Owner-approved compile-only check (no app/browser launch, tests, hosted tests, listeners, or HTTP requests):
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -quiet -project dev-manager.xcodeproj -scheme dev-manager -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath /tmp/dev-manager-layout-build CODE_SIGNING_ALLOWED=NO build`
+- Result: succeeded (exit status 0); Xcode emitted only the generic macOS placeholder-destination diagnostic.
+- Follow-up styling build succeeded (exit status 0); visual validation remains pending for grouping, narrow-window truncation, and multisite menu behavior. No Step 2.3 scenarios or G2 status passes are newly claimed.

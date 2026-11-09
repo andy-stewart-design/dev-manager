@@ -25,16 +25,7 @@ struct ProjectDetailView: View {
             CommandEditor(project: project, store: store)
 
             executionSection
-
-            let runState = runner.state(for: project.id)
-            SiteStatusView(
-                state: runState?.siteState ?? .inactive,
-                isOpeningWebsite: runState?.isOpeningWebsite ?? false,
-                siteActionError: runState?.siteActionError,
-                onOpen: { site in
-                    Task { await runner.openWebsite(projectID: project.id, site: site) }
-                }
-            )
+            outputSection
 
             Section {
                 Button("Remove Project…", role: .destructive) {
@@ -89,40 +80,24 @@ struct ProjectDetailView: View {
                 }
             }
 
-            if let state, state.isActive || !state.logs.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if state.logs.isEmpty {
-                            Text("Waiting for output…")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            LazyVStack(alignment: .leading, spacing: 3) {
-                                ForEach(state.logs) { entry in
-                                    Text("[\(entry.label)] \(entry.text)")
-                                        .font(.system(.caption, design: .monospaced))
-                                        .textSelection(.enabled)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                        }
-                    }
-                    .padding(8)
+            SiteStatusView(
+                state: state?.siteState ?? .inactive,
+                isOpeningWebsite: state?.isOpeningWebsite ?? false,
+                canOpenWebsite: state?.phase == .running,
+                siteActionError: state?.siteActionError,
+                onOpen: { site in
+                    Task { await runner.openWebsite(projectID: project.id, site: site) }
                 }
-                .frame(minHeight: 120, maxHeight: 280)
-                .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-            }
+            )
+        }
+    }
 
-            if state?.didTruncateLogs == true {
-                Label("Older output was trimmed after the 2 MiB per-project log limit.", systemImage: "scissors")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-            if let cleanupError = state?.cleanupError {
-                Label(cleanupError, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
+    @ViewBuilder
+    private var outputSection: some View {
+        let state = runner.state(for: project.id)
+        if let state, state.isActive || !state.logs.isEmpty || state.didTruncateLogs || state.cleanupError != nil {
+            Section("Output") {
+                ProjectOutputView(state: state)
             }
         }
     }
