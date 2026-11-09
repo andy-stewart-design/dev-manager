@@ -58,6 +58,21 @@ struct RunState: Identifiable, Equatable, Sendable {
     let didTruncateLogs: Bool
     let message: String?
     let cleanupError: String?
+    let siteState: SiteDiscoveryState
+
+    init(id: UUID, processID: Int32?, processGroupID: Int32?, phase: RunPhase,
+         logs: [RunLogEntry], didTruncateLogs: Bool, message: String?, cleanupError: String?,
+         siteState: SiteDiscoveryState = .inactive) {
+        self.id = id
+        self.processID = processID
+        self.processGroupID = processGroupID
+        self.phase = phase
+        self.logs = logs
+        self.didTruncateLogs = didTruncateLogs
+        self.message = message
+        self.cleanupError = cleanupError
+        self.siteState = siteState
+    }
 
     var isActive: Bool {
         switch phase {

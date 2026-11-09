@@ -26,6 +26,8 @@ struct ProjectDetailView: View {
 
             executionSection
 
+            SiteStatusView(state: runner.state(for: project.id)?.siteState ?? .inactive)
+
             Section {
                 Button("Remove Project…", role: .destructive) {
                     isShowingRemoveConfirmation = true

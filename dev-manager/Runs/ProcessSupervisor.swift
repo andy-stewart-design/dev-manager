@@ -18,6 +18,8 @@ final class ProcessSupervisor {
         var phase: RunPhase = .launching
         var message: String? = "Initializing zsh login/interactive environment…"
         var cleanupError: String?
+        var siteDiscoveryState: SiteDiscoveryState = .inactive
+        var siteDiscovery: SiteDiscoveryCoordinator?
         var initialized = false
         var launcherExited = false
         var cleanupCompleted = false
@@ -124,6 +126,12 @@ final class ProcessSupervisor {
 
         run.identity = ProcessIdentity(processID: process.processID, processGroupID: process.processGroupID, startTime: process.startTime)
         RunJournal.record(projectID: project.id, identity: run.identity!)
+        // Create discovery before the pipe readers so the first output chunk is retained.
+        run.siteDiscovery = SiteDiscoveryCoordinator(identity: run.identity!) { [weak self, weak run] state in
+            guard let self, let run, self.activeRuns[project.id]?.runID == runID else { return }
+            run.siteDiscoveryState = state
+            self.publish(run)
+        }
         let inbox = OutputInbox { [weak self] stream, data, eof, droppedBytes in
             self?.receive(data: data, stream: stream, eof: eof, droppedBytes: droppedBytes, projectID: project.id, runID: runID)
         }
@@ -147,6 +155,7 @@ final class ProcessSupervisor {
         }
 
         if run.stopRequested {
+            run.siteDiscovery?.cancel()
             run.phase = .stopping
             run.message = "Stopping the process group requested during launch…"
             publish(run)
@@ -162,6 +171,7 @@ final class ProcessSupervisor {
     func stop(projectID: UUID) {
         guard let run = activeRuns[projectID] else { return }
         run.stopRequested = true
+        run.siteDiscovery?.cancel()
         run.phase = .stopping
         run.message = run.identity.map { "Stopping owned process group \($0.processGroupID)…" } ?? "Cancelling pending launch…"
         run.initializationTask?.cancel()
@@ -180,6 +190,7 @@ final class ProcessSupervisor {
         let runs = Array(activeRuns.values)
         for run in runs {
             run.stopRequested = true
+            run.siteDiscovery?.cancel()
             run.phase = .stopping
             run.message = "Stopping for application quit…"
             run.initializationTask?.cancel()
@@ -243,6 +254,7 @@ final class ProcessSupervisor {
             run.phase = .running
             run.message = "Command is running."
             run.initializationTask = nil
+            run.siteDiscovery?.startScanning()
             publish(run)
         case .timedOut:
             run.phase = .stopping
@@ -264,8 +276,12 @@ final class ProcessSupervisor {
             run.logBuffer.append(runID: run.runID, stream: stream, phase: run.initialized ? .command : .shellInitialization, text: "[Dev Manager dropped \(droppedBytes) bytes of pending output to keep controls responsive.]\n")
         }
         let phase: RunOutputPhase = run.initialized ? .command : .shellInitialization
-        if !data.isEmpty { run.outputAccumulator.consume(data: data, stream: stream, phase: phase, runID: run.runID, logBuffer: run.logBuffer) }
+        if !data.isEmpty {
+            run.siteDiscovery?.receive(data, from: stream)
+            run.outputAccumulator.consume(data: data, stream: stream, phase: phase, runID: run.runID, logBuffer: run.logBuffer)
+        }
         if eof {
+            run.siteDiscovery?.finish(stream)
             run.outputAccumulator.finish(stream: stream, phase: phase, runID: run.runID, logBuffer: run.logBuffer)
             if stream == .stdout { run.stdoutClosed = true } else { run.stderrClosed = true }
             finalizeIfReady(run)
@@ -275,6 +291,7 @@ final class ProcessSupervisor {
 
     private func launcherExited(projectID: UUID, runID: UUID, exit: ProcessExit?, error: Error?) {
         guard let run = activeRuns[projectID], run.runID == runID else { return }
+        run.siteDiscovery?.cancel()
         run.launcherExited = true
         if let error {
             run.phase = .failed
@@ -312,6 +329,7 @@ final class ProcessSupervisor {
     private func finalizeIfReady(_ run: ActiveRun) {
         guard run.cleanupCompleted, run.stdoutClosed, run.stderrClosed else { return }
         run.initializationTask?.cancel()
+        run.siteDiscovery?.cancel()
         run.readers.forEach { $0.cancel() }
         run.phase = run.cleanupError == nil && run.phase != .failed ? .exited : .failed
         if run.message == "Owned process group stopped." { run.message = "Stopped." }
@@ -330,7 +348,7 @@ final class ProcessSupervisor {
 
     private func publish(_ run: ActiveRun) {
         let snapshot = run.logBuffer.snapshot()
-        stateHandler(run.projectID, RunState(id: run.runID, processID: run.identity?.processID, processGroupID: run.identity?.processGroupID, phase: run.phase, logs: snapshot.0, didTruncateLogs: snapshot.1, message: run.message, cleanupError: run.cleanupError))
+        stateHandler(run.projectID, RunState(id: run.runID, processID: run.identity?.processID, processGroupID: run.identity?.processGroupID, phase: run.phase, logs: snapshot.0, didTruncateLogs: snapshot.1, message: run.message, cleanupError: run.cleanupError, siteState: run.siteDiscoveryState))
     }
 
     private func actionableMessage(for error: Error) -> String {
