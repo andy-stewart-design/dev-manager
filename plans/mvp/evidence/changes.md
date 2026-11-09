@@ -1,5 +1,9 @@
 # Agreed planning changes
 
+## Step 2.1 source placement and compile compatibility
+
+The user authorized Step 2.1 after approving feature-oriented source organization, with `Discovery/` added when discovery work begins. Its expected files now use `Discovery/` in app and test sources rather than root-level parser files. The compile-only check also required existing runner-test constructors to pass the process start time introduced in 1.4; this aligns an existing API consumer and adds no process behavior or test execution. Requirement/acceptance IDs and parser-only scope are unchanged.
+
 ## Step 1.2a responsibility split
 
 The owner approved “ok, let's do 1.2a” after the proposed split explicitly assigned log reading/decoding/partial-line assembly to the existing log components. The step's expected files now include `Runs/LogBuffer.swift`, where `RunOutputAccumulator` was extracted. This is part of that approved behavior-preserving decomposition, not new product scope. Implementation checkboxes reflect performed source work; manual composition checks remain unchecked in the plan and pending in `step-1.2a.md`.

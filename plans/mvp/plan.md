@@ -222,14 +222,15 @@ Review boundary: pure streaming parser and candidate model; candidates are not w
 
 Expected files:
 
-- `APP/LocalURLCandidate.swift`, `APP/LocalURLParser.swift` — stream-aware extraction, filtering and normalized identity.
-- `TESTS/LocalURLCandidateTests.swift` — proposed table-driven native tests using the supplied output shapes.
+- `APP/Discovery/LocalURLCandidate.swift`, `APP/Discovery/LocalURLParser.swift` — stream-aware extraction, filtering and normalized identity in the approved feature-oriented layout.
+- `TESTS/Discovery/LocalURLCandidateTests.swift` — table-driven native cases using the supplied output shapes.
+- Existing `TESTS/Runs/ProjectRunnerTests.swift` — constructor argument alignment with the previously added process start-time identity; no new process-test behavior or execution.
 
 Tasks:
 
-- [ ] Parse each run's stdout/stderr incrementally, carrying incomplete text/control sequences across chunks and stripping ANSI formatting for detection without discarding useful log output.
-- [ ] Accept only HTTP/HTTPS on parsed `localhost`, `127.0.0.1`, or `::1`; reject LAN/public/deceptive hosts and non-web schemes. Preserve meaningful scheme/path; normalize the omitted root slash and repeated announcements.
-- [ ] Add a compact table of Vite/Next.js examples, ANSI/chunk splits, loopback forms, Network/public/documentation URLs, deceptive hosts, and path-preserving deduplication cases. No snapshot or terminal-emulation harness.
+- [x] Parse each run's stdout/stderr incrementally, carrying incomplete text/control sequences across chunks and stripping ANSI formatting for detection without discarding useful log output.
+- [x] Accept only HTTP/HTTPS on parsed `localhost`, `127.0.0.1`, or `::1`; reject LAN/public/deceptive hosts and non-web schemes. Preserve meaningful scheme/path; normalize the omitted root slash and repeated announcements.
+- [x] Add a compact table of Vite/Next.js examples, ANSI/chunk splits, loopback forms, Network/public/documentation URLs, deceptive hosts, and path-preserving deduplication cases. No snapshot or terminal-emulation harness.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:

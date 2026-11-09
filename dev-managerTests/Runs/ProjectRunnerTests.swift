@@ -16,7 +16,7 @@ func realRunCapturesOutputAndBlocksDuplicateStart() async throws {
     let stdoutTask = Task.detached { String(data: (try? spawned.stdout.readToEnd()) ?? Data(), encoding: .utf8) ?? "" }
     let stderrTask = Task.detached { String(data: (try? spawned.stderr.readToEnd()) ?? Data(), encoding: .utf8) ?? "" }
     try await Task.sleep(for: .milliseconds(200))
-    let stopResult = await Task.detached { ProcessLauncher.stop(identity: ProcessIdentity(processID: spawned.processID, processGroupID: spawned.processGroupID)) }.value
+    let stopResult = await Task.detached { ProcessLauncher.stop(identity: ProcessIdentity(processID: spawned.processID, processGroupID: spawned.processGroupID, startTime: spawned.startTime)) }.value
     let stdout = await stdoutTask.value
     let stderr = await stderrTask.value
     #expect(stopResult.groupGone)
@@ -44,19 +44,19 @@ func stopOwnsChildrenAndIsolatesRuns() async throws {
     let first = try ProcessLauncher.spawn(shell: shell, folder: firstFolder, command: "sleep 60 & child=$!; printf '%s\\n' \"$child\" > '\(childFile.path)'; wait $child")
     let second = try ProcessLauncher.spawn(shell: shell, folder: secondFolder, command: "sleep 60")
     defer {
-        _ = ProcessLauncher.stop(identity: ProcessIdentity(processID: first.processID, processGroupID: first.processGroupID))
-        _ = ProcessLauncher.stop(identity: ProcessIdentity(processID: second.processID, processGroupID: second.processGroupID))
+        _ = ProcessLauncher.stop(identity: ProcessIdentity(processID: first.processID, processGroupID: first.processGroupID, startTime: first.startTime))
+        _ = ProcessLauncher.stop(identity: ProcessIdentity(processID: second.processID, processGroupID: second.processGroupID, startTime: second.startTime))
     }
 
     try await waitForFile(childFile)
     let childPID = Int32(try String(contentsOf: childFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
-    _ = await Task.detached { ProcessLauncher.stop(identity: ProcessIdentity(processID: first.processID, processGroupID: first.processGroupID)) }.value
+    _ = await Task.detached { ProcessLauncher.stop(identity: ProcessIdentity(processID: first.processID, processGroupID: first.processGroupID, startTime: first.startTime)) }.value
     // The child is the safety proof. macOS may briefly retain a killed group's
     // zombie bookkeeping after the finite escalation, which is reported rather
     // than hidden by the launcher.
     #expect(!ProcessLauncher.isGroupAlive(childPID))
     #expect(ProcessLauncher.isGroupAlive(second.processGroupID))
-    _ = await Task.detached { ProcessLauncher.stop(identity: ProcessIdentity(processID: second.processID, processGroupID: second.processGroupID)) }.value
+    _ = await Task.detached { ProcessLauncher.stop(identity: ProcessIdentity(processID: second.processID, processGroupID: second.processGroupID, startTime: second.startTime)) }.value
 }
 
 @Test("concurrent stop requests share one cleanup barrier")
