@@ -348,20 +348,20 @@ Expected files:
 
 Tasks:
 
-- [ ] With the owner, inspect the final current-user/non-sandboxed configuration and prepare an app through the actual Xcode archive/export flow. Use the owner's chosen identity; do not infer one from account availability.
+- [x] Reconcile the inspected current-user/non-sandboxed configuration, owner-selected Developer ID setup, and owner-prepared alpha app. Record the actual owner report without inventing an exported-artifact path or signing assessment.
 - [ ] If the owner approves and supplies credentials, sign/notarize the app and staple as appropriate using the tooling/workflow present on their machine. Record the actual invocation or Xcode action in evidence; no submission occurs merely because this plan exists.
-- [ ] Owner launches the exported app through Finder, ideally on a known tester's Mac, and confirms normal opening plus one start/discover/open/stop cycle with that machine's installed tools. Compare artifact identity to the build whose evidence is cited.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence; do not send or publish the artifact automatically.
+- [x] Record the owner's successful work-Mac app launch, project registration, and dev-server start as the agreed functional alpha handoff. Do not infer unreported browser/Stop checks or signature/notarization results for that machine.
+- [x] Record the owner's explicit MVP SOW acceptance and close the functional delivery boundary below; do not send or publish the artifact automatically.
 
 Verification:
 
 - Automated: commands, if used, are derived from the owner's actual signing/export tools and artifact path and recorded at execution. Signature/notarization assessment proves artifact suitability, not functional acceptance.
 - Manual: owner checks the exported artifact opens normally through Finder without disabling platform security, uses no elevation, and can manage a local project with its installed toolchain. Missing credentials/tester access blocks the relevant sharing check, not earlier local development.
 
-Completion gate: **G-share** requires a checked artifact, current-user runtime behavior, and owner-controlled distribution decision; signature acceptance alone does not replace G3. No sharing or release is performed by this step.
+Completion gate: the owner accepted the functional alpha handoff after successfully opening the app, adding a project, and starting its dev server on a work Mac. This closes the MVP SOW under the owner's explicit delivery decision, recorded in `evidence/step-3.2.md`. Independent signature/notarization/ticket inspection is not implied; the unreported signing task remains unchecked. No agent sharing or publication is authorized.
 Evidence location: [evidence/step-3.2.md](evidence/step-3.2.md).
 
-Phase exit gates: **G3 core reconciliation is closed in `evidence/step-3.1.md`** using the existing acceptance map and owner-reported evidence; it is not release approval. If the owner proceeds toward sharing, assess **G-share** only after the separate Step 3.2 checks and record it in `evidence/step-3.2.md`. Supervised approvals happen only after the applicable gate is assessed.
+Phase exit gates: **G3 core reconciliation is closed in `evidence/step-3.1.md`**. The owner-controlled functional alpha handoff and MVP SOW acceptance are recorded in `evidence/step-3.2.md`; they do not assert an independent signing/notarization assessment. Deferred compatibility and unreported technical checks are not marked passed. No further implementation, testing, or publication follows automatically from this closure.
 
 ## Final acceptance
 
@@ -404,6 +404,6 @@ Final regression scope: Step 3.1 reuses the existing owner-reported walkthrough 
 
 - Full UI automation, CI, stress/soak infrastructure, and a broad shell/version-manager matrix are deferred until real usage justifies them. This does not waive the focused isolation, rollover, cancellation, and shutdown checks above.
 - Crash-proof supervision, detached-daemon ownership, arbitrary external/container services, LAN/public/custom-domain discovery, custom HTTPS trust, and deep application health remain outside the governing MVP scope.
-- Tester-machine launch and notarization assessment wait for owner access/approval in 3.2; they block suitability for sharing, not a local MVP demonstration. Trusted local HTTPS remains deferred/unverified compatibility coverage, not an initial-MVP completion blocker; default certificate validation must remain enabled.
+- The owner reported successful work-Mac launch, project registration, and dev-server execution and accepted the MVP SOW. Independent signature/notarization assessment remains unreported and is not claimed by that functional acceptance. Trusted local HTTPS remains deferred/unverified compatibility coverage, not an initial-MVP completion blocker; default certificate validation must remain enabled.
 
 Execution-time blockers, results, skipped/waived checks, and accepted deviations belong in the predetermined evidence notes, not mutable plan status. Stop after planning until the owner explicitly begins the next workflow.

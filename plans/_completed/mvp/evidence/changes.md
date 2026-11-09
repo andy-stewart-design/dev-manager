@@ -1,5 +1,9 @@
 # Agreed planning changes
 
+## Final MVP SOW acceptance and alpha handoff
+
+After personally preparing the app and successfully opening/running it on a work Mac, adding a project, and starting its dev server, the owner stated, “I think we're good to call this MVP SOW done”. The plan now records that owner-approved functional delivery boundary rather than demanding a repeated test ceremony. Step 3.2's owner handoff tasks are checked; the signing/notarization task remains unchecked because its execution/results were not independently reported. Evidence is in `step-3.2.md`. Deferred compatibility remains unverified, no release certification is invented, and no source, upload, signing, or distribution action was performed by the agent.
+
 ## Narrowed initial MVP acceptance and final Stop/stale check
 
 After the owner questioned whether the compatibility matrix belonged in the MVP, the agreed initial boundary became their working Vite/Next/Astro HTTP projects and custom delayed wrapper, with one needed website per project, actual dynamic URLs, owned startup readiness, browser actions, and Stop/stale-state safety. Dedicated non-web workflows are not an MVP category; an undiscovered URL still must not fail a valid running command. Multi-site (AC12), silent-server fallback (AC10), trusted HTTPS (AC17), and expanded response fixtures are deferred verification—not removed features or passed checks. Existing local-only ownership, default TLS trust, and refusing probe redirects remain safeguards.
