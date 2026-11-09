@@ -213,7 +213,10 @@ enum ProcessLauncher {
         var currentGroup: pid_t = 0
         var startSeconds: UInt64 = 0
         var startMicros: UInt32 = 0
-        guard dm_process_identity(child, &currentGroup, &startSeconds, &startMicros) == 1,
+        // The child remains unreaped until normal supervision observes and reaps it.
+        // Permit SZOMB here so a fast command still returns its pipes and exit status;
+        // all recovery/stop readers continue to reject zombies.
+        guard dm_created_process_identity(child, &currentGroup, &startSeconds, &startMicros) == 1,
               currentGroup == child else {
             _ = terminateAndReapCreatedChild(child)
             close(stdoutPipe.read); close(stderr.read); close(ready.read)

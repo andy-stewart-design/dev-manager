@@ -292,7 +292,9 @@ final class ProcessSupervisor {
     private func apply(stopResult: StopResult, projectID: UUID, runID: UUID) {
         guard let run = activeRuns[projectID], run.runID == runID else { return }
         if stopResult.groupGone, let exit = stopResult.exit {
-            RunJournal.remove(projectID: projectID)
+            if let identity = run.identity {
+                RunJournal.remove(projectID: projectID, identity: identity)
+            }
             run.cleanupCompleted = true
             run.exit = exit
             run.cleanupError = nil

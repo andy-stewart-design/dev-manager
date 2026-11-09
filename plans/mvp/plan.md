@@ -185,6 +185,7 @@ Review boundary: one warning-only, best-effort startup recovery component for ve
 Expected files:
 
 - `APP/Runs/RunJournal.swift` — one atomic JSON Application Support journal entry per run with exactly the recovery metadata needed: `{projectID, pid, pgid, OSprocessStartTime}`.
+- `APP/Runs/ProcessIdentity.c/.h` — existing narrow libproc identity reader, created-child capture, and bounded direct-child query used by recovery; no persisted child records.
 - Existing `APP/Runs/ProcessSupervisor.swift` or `APP/Runs/ProcessLauncher.swift` — minimal record-after-spawn and confirmed-cleanup removal calls; do not add a second process owner.
 - Existing `APP/App/AppLifecycle.swift` — minimal launch-time inspection and warning diagnostics, without turning recovery into a UI gate.
 - Optional `TESTS/Runs/RunJournalTests.swift` only if the owner explicitly approves isolated metadata fixtures; no new folder or complex harness.
@@ -192,10 +193,10 @@ Expected files:
 Tasks:
 
 - [x] Write one journal entry atomically after spawn as soon as practical and remove it only after confirmed stop. Do not write an intent record before exec; accept the spawn-to-write window. Journal I/O failure logs the problem and never deletes project settings or stops a process that is not positively owned.
-- [x] On launch, recover only when the PID is alive, its OS process start time matches, and the PID is still leader of the recorded positive PGID. Recheck identity immediately before SIGTERM and again before SIGKILL after a short finite wait; if still verified, escalate once. A recovery orphan is not the app's direct child and must not go through a child-only `waitpid` routine.
+- [x] On launch, recover only when the PID is alive, its OS process start time matches, and the PID is still leader of the recorded positive PGID. Before signaling, inspect the current descendant tree and capture only positively attributed additional group leaders; recheck each captured leader immediately before SIGTERM/SIGKILL and signal those groups before the launcher root. Recheck the root through discovery and each root signal, use the existing finite TERM/KILL waits, and leave unverifiable groups alone. A recovery orphan is not the app's direct child and must not go through a child-only `waitpid` routine.
 - [x] Drop dead-PID or start-time-mismatched records without signaling. Leave ambiguous permission, group, or identity cases alone with a diagnostic warning; do not silently require a UI warning. Deliberately drop a dead leader with live children rather than attempting recovery.
 - [x] State explicitly that concurrent app instances are unsupported; do not add locking or owner-identity metadata. Keep this one bounded component and do not promise an exact line count.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence.
+- [x] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:
 
