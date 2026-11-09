@@ -16,7 +16,7 @@ struct SiteStatusView: View {
             Label("Not active", systemImage: "minus.circle")
                 .foregroundStyle(.secondary)
         case .discovering:
-            Label("Discovering…", systemImage: "magnifyingglass")
+            Label("Waiting…", systemImage: "magnifyingglass")
                 .foregroundStyle(.secondary)
         case .responding:
             readyContent

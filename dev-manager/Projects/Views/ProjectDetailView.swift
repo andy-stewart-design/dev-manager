@@ -5,6 +5,7 @@ struct ProjectDetailView: View {
     @ObservedObject var store: ProjectStore
     @ObservedObject var runner: ProjectRunner
     @State private var settingsProject: Project?
+    private let executionRowMinimumHeight: CGFloat = 32
 
     var body: some View {
         Form {
@@ -66,6 +67,7 @@ struct ProjectDetailView: View {
                     .disabled(!runner.canStart(projectID: project.id) || project.validationError != nil || project.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .frame(minHeight: executionRowMinimumHeight)
 
             SiteStatusView(
                 state: state?.siteState ?? .inactive,
@@ -76,16 +78,15 @@ struct ProjectDetailView: View {
                     Task { await runner.openWebsite(projectID: project.id, site: site) }
                 }
             )
+            .frame(minHeight: executionRowMinimumHeight, alignment: .leading)
         }
     }
 
     @ViewBuilder
     private var outputSection: some View {
         let state = runner.state(for: project.id)
-        if let state, state.isActive || !state.logs.isEmpty || state.didTruncateLogs || state.cleanupError != nil {
-            Section("Output") {
-                ProjectOutputView(state: state)
-            }
+        Section("Output") {
+            ProjectOutputView(state: state)
         }
     }
 }

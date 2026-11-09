@@ -1,5 +1,10 @@
 # Agreed planning changes
 
+## Explicit request: stabilize selected-project layout
+
+- Actual user request: keep the Execution row stable when the Ready browser action appears, and always show the selected project's Output section with a plain empty-state placeholder before the first run or when logs are empty. The implementation keeps existing discovery, browser, process, and output-retention behavior unchanged.
+- The owner UI review remains pending. The requested manual checks are start-empty, Start-before-Ready row stability, and Stop with logs retained; the compile-only build is evidence of compilation only, not a visual claim.
+
 ## Project Settings alignment, Finder reveal, and footer removal
 
 The user requested the three annotated settings-sheet updates: align Name/Folder values to one leading column, make the Folder path reveal the selected folder in Finder, and move Remove Project to the left side of the footer beside right-aligned Cancel/Save. The implementation preserves read-only project metadata, command staging, fresh removal ownership checks, and app-entry-only confirmation. The compile-only build passed; manual layout and Finder-action validation remain pending. No app/Finder launch or tests were performed. Details are recorded in `step-2.3.md`.
