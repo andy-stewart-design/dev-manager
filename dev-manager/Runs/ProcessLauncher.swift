@@ -7,11 +7,13 @@ nonisolated struct SpawnedProcess: Sendable {
     let stdout: FileHandle
     let stderr: FileHandle
     let ready: FileHandle
+    let startTime: RunJournalEntry.ProcessStartTime
 }
 
 nonisolated struct ProcessIdentity: Sendable {
     let processID: Int32
     let processGroupID: Int32
+    let startTime: RunJournalEntry.ProcessStartTime
 }
 
 nonisolated struct ProcessExit: Sendable {
@@ -208,12 +210,23 @@ enum ProcessLauncher {
             throw ProcessLauncherError.ownershipObservationFailed("the created launcher exited before its process group could be verified")
         }
 
+        var currentGroup: pid_t = 0
+        var startSeconds: UInt64 = 0
+        var startMicros: UInt32 = 0
+        guard dm_process_identity(child, &currentGroup, &startSeconds, &startMicros) == 1,
+              currentGroup == child else {
+            _ = terminateAndReapCreatedChild(child)
+            close(stdoutPipe.read); close(stderr.read); close(ready.read)
+            throw ProcessLauncherError.ownershipObservationFailed("the created launcher start identity could not be read")
+        }
+
         return SpawnedProcess(
             processID: child,
             processGroupID: child,
             stdout: FileHandle(fileDescriptor: stdoutPipe.read, closeOnDealloc: true),
             stderr: FileHandle(fileDescriptor: stderr.read, closeOnDealloc: true),
-            ready: FileHandle(fileDescriptor: ready.read, closeOnDealloc: true)
+            ready: FileHandle(fileDescriptor: ready.read, closeOnDealloc: true),
+            startTime: RunJournalEntry.ProcessStartTime(seconds: startSeconds, microseconds: startMicros)
         )
     }
 

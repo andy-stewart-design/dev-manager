@@ -19,7 +19,7 @@ This plan is an execution contract. Routine changes are limited to checking perf
 - Implement one project model, one owner of each run, and one per-run discovery coordinator; avoid redundant service abstractions. A small launch wrapper is acceptable only if needed to establish reliable process-group ownership.
 - The app may execute only explicitly started commands under current-user privileges. Never signal a process because it owns a familiar port, modify repository/shell files, install project dependencies, or use automatic elevation. Preserve unrelated work and unrelated services.
 - Use a bounded pipe/log experience, not a PTY. Start and cleanup must be delivered together before exposing live command execution. Keep UI consumers and their state changes buildable within each step.
-- Proposed initial internal limits: 2 MiB retained log text per project across identifiable current-session run segments; graceful interrupt for up to 3 seconds, terminate for another 2 seconds, then kill and allow 1 second for confirmation; 10-second bounded environment-initialization attempt; 2-second per-request probe deadline; at most four concurrent probes per run; owned-listener scan every 2 seconds while the run is active; show an informational no-site result after 15 seconds without ending discovery. Quit shuts down runs concurrently rather than multiplying the per-run budget. Unexpected cleanup failure must remain visible. These are planned defaults to validate, not observed behavior or permission to change the contract silently.
+- Proposed initial internal limits: a 2 MiB bounded log buffer per run, retained after Stop or exit until the next Start; each successful Start begins a fresh buffer rather than cross-run history. Graceful interrupt runs for up to 3 seconds, terminate for another 2 seconds, then kill and allow 1 second for confirmation; 10-second bounded environment-initialization attempt; 2-second per-request probe deadline; at most four concurrent probes per run; owned-listener scan every 2 seconds while the run is active; show an informational no-site result after 15 seconds without ending discovery. Quit shuts down runs concurrently rather than multiplying the per-run budget. Unexpected cleanup failure must remain visible. These are planned defaults to validate, not observed behavior or permission to change the contract silently.
 - Focused checks stay small and manual-first: proposed `LocalURLCandidateTests` plus focused run-freshness checks in the existing `TESTS/Runs/ProjectRunnerTests.swift` remain optional owner-approved checks. No UI tests, CI setup, coverage target, exhaustive shell matrix, persistent fixture service, or new hosted-test infrastructure. Use owner-run manual commands/servers and existing owner projects for live proof; do not automatically launch the app or run hosted tests because app-hosted tests launch the app.
 - Future verification gates should use the actual owner-approved Xcode build procedure and owner manual behavior checks first. A focused native test or isolated metadata check is optional only with explicit owner approval; historical test/build evidence remains historical and is not rewritten as new proof.
 - Before touching owner projects, starting listeners, occupying ports, running high-output commands, or building an artifact, coordinate the session with the owner. The owner supplies safe project paths, available ports, installed tools, and necessary platform access. Missing prerequisites block their specific checks; they are not passes.
@@ -65,7 +65,7 @@ Tasks:
 Verification:
 
 - Automated: no existing command is assumed. After scaffold handoff, derive any `xcodebuild` invocation from its actual project/workspace and scheme, from the project root, and record it in evidence. Do not add a CLI wrapper merely to standardize this.
-- Manual: owner confirms the starter app runs from Xcode. Combine that observation with the native build/test checks above; a second UI-driven Build/Test pass is not required merely to repeat those results. Full window-close/reopen and process-lifetime behavior is verified with the implementation in Step 1.3. Generated tests prove only the scaffold, not feature behavior.
+- Manual: owner confirms the starter app runs from Xcode. Combine that observation with the native build/test checks above; a second UI-driven Build/Test pass is not required merely to repeat those results. Full window-close/reopen and process-lifetime behavior remains part of the Step 1.2 lifecycle requirement. Generated tests prove only the scaffold, not feature behavior.
 
 Completion gate: supplied scaffold builds/launches on macOS 15 or later with app/test deployment targets set to 15.0, its actual paths and repeatable build/test procedure are known, and inherited failures are distinguished from future regressions. Missing scaffold/platform access blocks all application implementation.
 Evidence location: [evidence/step-0.1.md](evidence/step-0.1.md).
@@ -116,7 +116,7 @@ Evidence location: [evidence/step-1.1.md](evidence/step-1.1.md).
 
 ### Step 1.2 — Start and stop an isolated real command with live output
 
-Requirements / acceptance: R2, R3, R5, R10; AC2, AC3 (execution portion), AC4 (Start/Stop isolation; Restart in 1.3), AC6 (core concurrent capture; stress in 1.3), AC16 (current-user runtime configuration; artifact check in 3.2).
+Requirements / acceptance: R2, R3, R5, R10; AC2, AC3 (execution portion), AC4 (Start/Stop isolation), AC6 (concurrent capture and bounded logs), AC16 (current-user runtime configuration; artifact check in 3.2).
 Depends on: Step 1.1.
 Review boundary: real launch, per-run ownership, live output, and bounded Stop as one atomic increment.
 
@@ -133,8 +133,8 @@ Tasks:
 - [x] Add a unique run identity and serialized lifecycle per project. Launch from the configured directory under the user's shell/environment; validate missing tools and report startup/initialization failures. Keep shell bootstrap diagnostic output distinct from dev-command output where practical. When project removal is connected to a runner, disallow unregistering projects that are active or stopping; removal must never forget a managed run.
 - [x] Establish a dedicated owned process group before executing the command, with command-shell job control disabled or equivalent demonstrated containment. If Foundation cannot guarantee this, use a small native spawn wrapper rather than assuming `Process.terminate()` kills descendants. Do not return a successful launch unless ownership is established.
 - [x] Implement graceful interrupt/terminate/kill escalation using the finite budgets above, retain ownership through launcher exit while known children remain, and never signal unrelated processes or recycled identifiers. Block duplicate Start and new runs while known cleanup is unresolved.
-- [x] Drain both pipes concurrently away from UI work, preserve stream/run identity, and keep a capped current-session log buffer with truncation feedback. Close unused stdin rather than offering terminal interaction.
-- [x] Wire real Start/Stop and errors atomically; coordinate normal app termination with owned cleanup immediately so this review boundary cannot strand live runs through ordinary Quit. Step 1.3 extends and validates the full window/restart experience.
+- [x] Drain both pipes concurrently away from UI work, preserve stream/run identity, and keep a bounded per-run log buffer with truncation feedback; retain it after Stop or exit until the next Start, which begins a fresh buffer. Close unused stdin rather than offering terminal interaction.
+- [x] Wire real Start/Stop and errors atomically; keep window close/reopen and normal app termination with owned cleanup in this lifecycle boundary so it cannot strand live runs through ordinary Quit. There is no separate Restart UI/API: a user can Stop and then Start manually after cleanup.
 - [x] Audit `POSIX_SPAWN_CLOEXEC_DEFAULT` support and use it where available, while explicitly auditing stdin/stdout/stderr and private-readiness inheritance before declaring 1.2 finished. The audit must show that only intended descriptors survive spawn and that the explicit file actions remain correct; do not claim this task complete from the current launcher alone.
 - [x] Keep process launch/setup and blocking supervision off the main actor, while rendering and published run state remain main-actor-owned. Preserve `duplicateStart`, `pendingStartStop`, project-Remove, and Quit ownership safety across every `await`; do not allow an asynchronous handoff to forget or duplicate a run.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
@@ -150,7 +150,7 @@ Evidence location: [evidence/step-1.2.md](evidence/step-1.2.md).
 ### Step 1.2a — Separate process supervision from main-actor UI state
 
 Requirements / acceptance: R2, R3, R4, R5; AC2, AC4, AC5, AC6, AC14 (composition and ownership safety only; no new product behavior).
-Depends on: Step 1.2 and its existing ownership/isolation gate; must complete before Step 1.3.
+Depends on: Step 1.2 and its existing ownership/isolation gate; must complete before Step 1.4.
 Review boundary: a narrow decomposition of the existing runner so OS launch/setup, blocking supervision, and process identity checks are separate from `@MainActor` rendering/state publication. Do not introduce a framework, dependency-injection layer, protocol forest, or a mandatory `AsyncStream` product API when a simple bounded callback is sufficient.
 
 Expected files:
@@ -176,38 +176,10 @@ Verification:
 Completion gate: process supervision is independently reviewable off the main actor, UI/state publication remains main-actor-owned, and all existing Step 1.2 ownership/isolation gates still pass. This step adds no user-visible behavior and remains unchecked until focused owner-approved review and manual composition checks occur.
 Evidence location: [evidence/step-1.2a.md](evidence/step-1.2a.md).
 
-### Step 1.3 — Finish Restart, window lifetime, and failure recovery
-
-Requirements / acceptance: R3, R4, R5, R9; AC4 (Restart completion), AC5, AC6 (stress completion), AC14 (process-only cancellation; discovery cancellation in 2.2/2.3).
-Depends on: Step 1.2a (and the existing Step 1.2 gate).
-Review boundary: compose Restart/window lifetime/failure recovery with the separated supervisor and main-actor state, plus bounded output behavior; not website discovery.
-
-Expected files:
-
-- `APP/Runs/ProjectRunner.swift`, `APP/Runs/RunState.swift`, `APP/Runs/LogBuffer.swift` — ordered restart, cancellation, exit reporting.
-- `APP/App/AppLifecycle.swift` or the existing app delegate — reopen and asynchronous termination coordination.
-- Existing project detail/log views; `TESTS/Runs/ProjectRunnerTests.swift` — proposed small native checks for run identity and ordering.
-
-Tasks:
-
-- [ ] Add Restart as complete Stop followed by a fresh run; Stop during launch cancels safely, and late old-run events cannot replace current state.
-- [ ] Keep the app/process store alive on last-window close, provide normal Dock/menu reopening, and finish asynchronous normal-Quit cleanup with visible failures and bounded escalation across concurrent runs.
-- [ ] Preserve bounded, identifiable logs after exit and across restart segments; keep controls responsive under heavy output and expose launch/exit/cleanup errors without deleting configuration.
-- [ ] Add focused native state checks for stale-run updates and no-overlap restart, using the 0.1 test target rather than introducing another runner.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence.
-
-Verification:
-
-- Focused, owner-approved only: if approved, build with the actual Xcode procedure and run the focused run-freshness checks in `TESTS/Runs/ProjectRunnerTests.swift`; assert stale events cannot update the active run and a restart waits for completed cleanup. A state test does not prove OS-level process cleanup, and no hosted test command is automatic.
-- Manual, owner-owned: with owner-approved commands, stop during slow startup, restart repeatedly, close/reopen the window with two projects running, and Quit with a child that ignores the initial graceful signal. Inspect ports/processes for cleanup and unrelated-process survival. Run a bounded high-output command on both streams and confirm truncation notice, post-exit logs, and usable controls. Exercise visible cleanup-error handling through a narrow development-only failure injection, never by signaling unrelated processes or requiring root.
-
-Completion gate: real Restart never overlaps runs, window close preserves work, ordinary Quit has finite cleanup, and heavy output does not freeze controls. Known cleanup failure blocks a misleading successful restart.
-Evidence location: [evidence/step-1.3.md](evidence/step-1.3.md).
-
 ### Step 1.4 — Best-effort stale-run recovery journal
 
 Requirements / acceptance: R12; AC19.
-Depends on: Step 1.3; complete this bounded recovery increment before assessing G1 or starting Phase 2.
+Depends on: Step 1.2a (and the existing Step 1.2 gate); complete this bounded recovery increment before assessing G1 or starting Phase 2.
 Review boundary: one warning-only, best-effort startup recovery component for verified stale managed process groups. No adoption/reconnect, crash-instant cleanup, watchdog, lock, owner-identity metadata, environment marker, PTY, log archive, or concurrent-instance support.
 
 Expected files:
@@ -219,10 +191,10 @@ Expected files:
 
 Tasks:
 
-- [ ] Write one journal entry atomically after spawn as soon as practical and remove it only after confirmed stop. Do not write an intent record before exec; accept the spawn-to-write window. Journal I/O failure logs the problem and never deletes project settings or stops a process that is not positively owned.
-- [ ] On launch, recover only when the PID is alive, its OS process start time matches, and the PID is still leader of the recorded positive PGID. Recheck identity immediately before SIGTERM and again before SIGKILL after a short finite wait; if still verified, escalate once. A recovery orphan is not the app's direct child and must not go through a child-only `waitpid` routine.
-- [ ] Drop dead-PID or start-time-mismatched records without signaling. Leave ambiguous permission, group, or identity cases alone with a diagnostic warning; do not silently require a UI warning. Deliberately drop a dead leader with live children rather than attempting recovery.
-- [ ] State explicitly that concurrent app instances are unsupported; do not add locking or owner-identity metadata. Keep this one bounded component and do not promise an exact line count.
+- [x] Write one journal entry atomically after spawn as soon as practical and remove it only after confirmed stop. Do not write an intent record before exec; accept the spawn-to-write window. Journal I/O failure logs the problem and never deletes project settings or stops a process that is not positively owned.
+- [x] On launch, recover only when the PID is alive, its OS process start time matches, and the PID is still leader of the recorded positive PGID. Recheck identity immediately before SIGTERM and again before SIGKILL after a short finite wait; if still verified, escalate once. A recovery orphan is not the app's direct child and must not go through a child-only `waitpid` routine.
+- [x] Drop dead-PID or start-time-mismatched records without signaling. Leave ambiguous permission, group, or identity cases alone with a diagnostic warning; do not silently require a UI warning. Deliberately drop a dead leader with live children rather than attempting recovery.
+- [x] State explicitly that concurrent app instances are unsupported; do not add locking or owner-identity metadata. Keep this one bounded component and do not promise an exact line count.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:
@@ -233,7 +205,7 @@ Verification:
 Completion gate: AC19 is manually reviewed as best-effort only; normal cleanup removes its entry, positive identity is required before each signal, ambiguous/stale metadata is not signaled, and all existing process ownership/lifecycle gates remain intact. Do not broaden G1 or claim guaranteed crash cleanup.
 Evidence location: [evidence/step-1.4.md](evidence/step-1.4.md).
 
-Phase exit gate **G1**: after Steps 1.2a, 1.3, and 1.4 checks, use one owner-approved Xcode build check and manually compose two saved projects, concurrent logs, independent Start/Stop/Restart, window reopen, normal Quit, and the bounded stale-run recovery review. Confirm no website button guesses a port yet and no unrelated listener is terminated. Include composition of the supervisor and recovery journal without demanding a broad suite or repeating every focused check. Record G1 in `evidence/step-1.3.md` before Phase 2 or supervised approval to advance.
+Phase exit gate **G1**: after Steps 1.2a and 1.4 checks, use one owner-approved Xcode build check and compose the existing Step 1.2 behavior: two saved projects, concurrent logs, independent Start/Stop, window close/reopen, normal Quit, and the bounded stale-run recovery review. Confirm no website button guesses a port yet and no unrelated listener is terminated. Include composition of the supervisor and recovery journal without demanding a broad suite or repeating every focused check. Record G1 in `evidence/step-1.4.md` before Phase 2 or supervised approval to advance.
 
 ## Phase 2 — Automatic current-run localhost discovery
 
@@ -244,7 +216,7 @@ Review boundary: URL candidate parsing, owned listeners, bounded web probes, and
 ### Step 2.1 — Extract and normalize local URL candidates
 
 Requirements / acceptance: R6, R7; AC11; AC7/AC8 (output interpretation only; real readiness/actions in 2.2/2.3).
-Depends on: Step 1.3 and G1.
+Depends on: G1, after Step 1.4 and the existing Step 1.2/1.2a lifecycle behavior.
 Review boundary: pure streaming parser and candidate model; candidates are not website actions yet.
 
 Expected files:
@@ -285,13 +257,13 @@ Tasks:
 - [ ] Combine parser candidates with listener evidence. Derive loopback targets for owned wildcard listeners, prefer an announced scheme/base path, deduplicate alias/root fallback choices for the same endpoint, and avoid treating identifiable inspector/WebSocket-only ports as websites.
 - [ ] Probe candidates locally using finite deadlines, limited concurrency, and default TLS trust. For socket-only unknown protocols try bounded HTTP/HTTPS checks rather than assuming HTTP. Do not follow nonlocal redirects or downgrade an explicitly advertised HTTPS URL. An actual HTTP response, including 404, means responding; a bare socket does not.
 - [ ] Feed discovering/responding/no-site/error information into the run's website state, separate from process state. Continue scanning while active after the no-site notice; if listener inspection fails, show diagnostics without guessing an address or disabling process controls.
-- [ ] Cancel probes/scans and immediately invalidate results on Stop/exit/Restart. Check project/run identity and current ownership before accepting results; extend the small state tests for an obsolete successful probe.
+- [ ] Cancel probes/scans and immediately invalidate results on Stop/exit/subsequent Start. Check project/run identity and current ownership before accepting results; extend the small state tests for an obsolete successful probe.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:
 
 - Owner-approved only: use the native build and focused existing parser/state checks, if explicitly approved, to assert an old run's successful probe cannot promote a candidate. Stub only the probe completion if necessary; do not build a fake networking platform or run hosted tests automatically.
-- Manual-first: owner approves a small disposable server command with no URL output, plus an unrelated server. Verify only the managed endpoint is detected. Exercise an announced-but-delayed endpoint, no-web command, plain non-HTTP listener, owned 404 response, and nonlocal redirect. Confirm the redirect is not fetched; review default TLS handling to ensure trust is not bypassed. Stop/restart while checks are pending and observe stale results discarded. Real trusted-HTTPS proof belongs to 2.3, after the opening UI exists; configuration review here does not claim that live acceptance.
+- Manual-first: owner approves a small disposable server command with no URL output, plus an unrelated server. Verify only the managed endpoint is detected. Exercise an announced-but-delayed endpoint, no-web command, plain non-HTTP listener, owned 404 response, and nonlocal redirect. Confirm the redirect is not fetched; review default TLS handling to ensure trust is not bypassed. Stop, then Start again after cleanup while checks are pending and observe stale results discarded. Real trusted-HTTPS proof belongs to 2.3, after the opening UI exists; configuration review here does not claim that live acceptance.
 
 Completion gate: AC10's automatic fallback works without manual URL entry; actual web responses and ownership are both required; cancellation cannot resurrect candidates. HTTPS probe code preserves default trust and advertised scheme, but real trusted-HTTPS acceptance remains explicitly incomplete until 2.3. Missing certificate access does not prevent implementing the opening UI.
 Evidence location: [evidence/step-2.2.md](evidence/step-2.2.md).
@@ -310,19 +282,19 @@ Expected files:
 Tasks:
 
 - [ ] Show process lifecycle and website discovery separately. Enable one Open action for one responding website, URL-labeled choices for multiple distinct websites, and informative no-site/probe errors without marking a running command failed.
-- [ ] Open the selected current-run URL in the default browser. Recheck run validity at action time; clear choices immediately on Stop/exit/Restart and report browser-open failures without changing the process.
+- [ ] Open the selected current-run URL in the default browser. Recheck run validity at action time; clear choices immediately on Stop/exit/subsequent Start and report browser-open failures without changing the process.
 - [ ] With the owner, validate real Vite/Next.js startup and port rollover, plus one multi-site command. Use exact observed URLs rather than a saved/default port; retain only localhost/loopback choices.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence.
 
 Verification:
 
 - Owner-approved only: use the native build plus the small parser/state check set if explicitly approved; no UI automation or automatic hosted test run is added.
-- Manual-first: for each of the owner's Vite and Next.js projects, observe one local choice from the normal output and click through. Deliberately occupy its default port using an owner-controlled unrelated server, start the project, and verify the actual incremented port opens. Restart after changing availability and verify the new port, never the old unrelated listener. With a command exposing two local websites plus non-web output/listener, confirm exactly the eligible web choices. Verify no-site, delayed startup, 404, trusted HTTPS, exit, and Stop-during-probe states through the actual UI. For HTTPS, the owner supplies a local server/certificate already trusted by the system; do not install certificates or change Keychain trust implicitly. Missing trusted-HTTPS prerequisites block AC17 and this full acceptance gate, not completion of the HTTP implementation tasks. The Next.js Network URL must never appear as a choice.
+- Manual-first: for each of the owner's Vite and Next.js projects, observe one local choice from the normal output and click through. Deliberately occupy its default port using an owner-controlled unrelated server, start the project, and verify the actual incremented port opens. Stop, then Start after changing availability and verify the new port, never the old unrelated listener. With a command exposing two local websites plus non-web output/listener, confirm exactly the eligible web choices. Verify no-site, delayed startup, 404, trusted HTTPS, exit, and Stop-during-probe states through the actual UI. For HTTPS, the owner supplies a local server/certificate already trusted by the system; do not install certificates or change Keychain trust implicitly. Missing trusted-HTTPS prerequisites block AC17 and this full acceptance gate, not completion of the HTTP implementation tasks. The Next.js Network URL must never appear as a choice.
 
 Completion gate: real browsers receive the actual current-run local URLs; both reference servers pass dynamic-port checks; multiple-site and stale-action behavior compose with process control. Parser-only or mock-only proof is insufficient.
 Evidence location: [evidence/step-2.3.md](evidence/step-2.3.md).
 
-Phase exit gate **G2**: after Step 2.3 checks, repeat one complete add/start/discover/open/restart/stop cycle for each real reference tool, with a default-port collision in at least one cycle per tool. Include the no-output fallback and another project running independently. Require local-only choices, responding owned endpoints, no stale browser action, and no orphan ordinary children. Record G2 in `evidence/step-2.3.md` before Phase 3 or supervised approval to advance. Socket fallback is required, not a future substitute for entering a fixed URL.
+Phase exit gate **G2**: after Step 2.3 checks, repeat one complete add/start/discover/open/stop-then-start/stop cycle for each real reference tool, with a default-port collision in at least one cycle per tool. Include the no-output fallback and another project running independently. Require local-only choices, responding owned endpoints, no stale browser action, and no orphan ordinary children. Record G2 in `evidence/step-2.3.md` before Phase 3 or supervised approval to advance. Socket fallback is required, not a future substitute for entering a fixed URL.
 
 ## Phase 3 — Owner acceptance and optional sharing boundary
 
@@ -344,7 +316,7 @@ Expected files:
 Tasks:
 
 - [ ] Have the owner use the established Xcode build procedure once as the default compilation check; run the two small native test groups only with explicit owner approval, and do not add a broader suite as a completion condition.
-- [ ] Have the owner walk through two saved projects from Finder launch: edit command, start, inspect logs, open actual sites, restart, close/reopen the window, stop independently, and Quit. Include one occupied-port scenario, errors, retained settings on relaunch, and the Step 1.2a supervision/state composition.
+- [ ] Have the owner walk through two saved projects from Finder launch: edit command, start, inspect logs, open actual sites, Stop then Start manually, close/reopen the window, stop independently, and Quit. Include one occupied-port scenario, errors, retained settings on relaunch, fresh logs on the next Start, and the Step 1.2a supervision/state composition.
 - [ ] Reconcile every acceptance ID against its owning evidence, including Step 1.4's warning-only stale-run recovery and AC19. Reuse meaningful earlier live observations rather than repeat every negative fixture; repeat lifecycle/isolation and dynamic-port checks in the final composed app. Missing real-project, trusted-HTTPS, environment, or approved recovery-fixture access remains visible as a blocked acceptance, never a fabricated pass.
 - [ ] Satisfy the verification and completion gate below, and record concise evidence and the owner's actual feedback without claiming release approval.
 
@@ -394,9 +366,9 @@ Each row names the owning proof, not a progress field. G3 reconciles these notes
 | AC1 | 1.1; G3 relaunch composition | Saved folder/command persist; restore never executes a command. | [step-1.1](evidence/step-1.1.md), [G3](evidence/step-3.1.md) |
 | AC2 | 1.2; G3 Finder launch | Owner's real command/toolchain works from GUI environment; both streams visible; no repository/profile modification. | [step-1.2](evidence/step-1.2.md), [G3](evidence/step-3.1.md) |
 | AC3 | 1.1 + 1.2 | Alternate installed command works; invalid folder/command/tool failure is visible and recoverable. | [step-1.1](evidence/step-1.1.md), [step-1.2](evidence/step-1.2.md) |
-| AC4 | 1.2 + 1.2a + 1.3; G1/G3 isolation | Stop/Restart cleans owned children before relaunch; other project and unrelated server survive; supervision/state composition preserves ownership. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [step-1.3](evidence/step-1.3.md), [G3](evidence/step-3.1.md) |
-| AC5 | 1.2a + 1.3; G1/G3 lifetime | Window close preserves work; Quit performs bounded escalation and exposes cleanup failure through the separated supervisor/state boundary. | [step-1.2a](evidence/step-1.2a.md), [step-1.3](evidence/step-1.3.md), [G3](evidence/step-3.1.md) |
-| AC6 | 1.3 | Heavy stdout/stderr stays bounded/inspectable without freezing controls. | [step-1.3](evidence/step-1.3.md) |
+| AC4 | 1.2 + 1.2a; G1/G3 isolation | Stop cleans owned children; a later manual Start begins only after cleanup; other project and unrelated server survive; supervision/state composition preserves ownership. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [G1](evidence/step-1.4.md), [G3](evidence/step-3.1.md) |
+| AC5 | 1.2 + 1.2a; G1/G3 lifetime | Window close preserves work; Quit performs bounded escalation and exposes cleanup failure through the existing supervisor/state boundary. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [G1](evidence/step-1.4.md), [G3](evidence/step-3.1.md) |
+| AC6 | 1.2; G1/G3 composition | Heavy stdout/stderr stays bounded/inspectable without freezing controls; logs remain available after Stop or exit until the next Start, which begins a fresh bounded buffer. | [step-1.2](evidence/step-1.2.md), [G1](evidence/step-1.4.md), [G3](evidence/step-3.1.md) |
 | AC7 | 2.3; G2 | Real Vite produces one verified local Open action. | [step-2.3](evidence/step-2.3.md) |
 | AC8 | 2.3; G2 | Real Next.js produces one local Open action, excluding Network URL. | [step-2.3](evidence/step-2.3.md) |
 | AC9 | 2.3; G2/G3 port rollover | Both frameworks' actual incremented/current-run ports open; unrelated/old port never substituted. | [step-2.3](evidence/step-2.3.md), [G3](evidence/step-3.1.md) |
@@ -404,12 +376,12 @@ Each row names the owning proof, not a progress field. G3 reconciles these notes
 | AC11 | 2.1 | Small native parser table proves local filtering, chunk/ANSI handling, and deduplication. | [step-2.1](evidence/step-2.1.md) |
 | AC12 | 2.3 | Two distinct local websites are choices; non-web listener is absent; each opens correctly. | [step-2.3](evidence/step-2.3.md) |
 | AC13 | 2.2 + 2.3 | No-web command stays manageable; delayed endpoint is not openable until responding. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
-| AC14 | 1.2a + 1.3 + 2.2 + 2.3 | Stop/startup and pending old probes cannot create overlapping runs or stale actions; async ownership remains safe across the supervision boundary. | [step-1.2a](evidence/step-1.2a.md), [step-1.3](evidence/step-1.3.md), [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
+| AC14 | 1.2 + 1.2a + 2.2 + 2.3; G1/G3 composition | Stop/startup and pending old probes cannot create overlapping runs or stale actions; async ownership remains safe across the supervision boundary. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [G1](evidence/step-1.4.md), [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC15 | 2.2 + 2.3 | Exit clears actions; 404 counts as responding; nonlocal redirects not fetched; TLS errors not bypassed. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC16 | 0.1/1.2 runtime; 3.2 G-share | Non-sandboxed current-user workflow and checked direct-distribution artifact before sharing. | [step-0.1](evidence/step-0.1.md), [step-1.2](evidence/step-1.2.md), [G-share](evidence/step-3.2.md) |
 | AC17 | 2.2 + 2.3 | Already trusted local HTTPS responds and opens as HTTPS without downgrade/trust bypass. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC18 | 1.1; G3 relaunch/removal composition | Command is leading-aligned; cancel is nonmutating; confirmed stable-ID removal changes only app settings; failed save retains entry/selection; folder/file bytes remain unchanged. | [step-1.1](evidence/step-1.1.md), [G3](evidence/step-3.1.md) |
-| AC19 | 1.4; G1/G3 recovery composition | One atomic post-spawn journal entry supports warning-only recovery only after positive PID/start-time/PGID checks; identity is rechecked before each signal; normal confirmed stop removes the entry; stale/mismatched/ambiguous records are not signaled; concurrent instances and orphan reaping are unsupported. | [step-1.4](evidence/step-1.4.md), [G1](evidence/step-1.3.md), [G3](evidence/step-3.1.md) |
+| AC19 | 1.4; G1/G3 recovery composition | One atomic post-spawn journal entry supports warning-only recovery only after positive PID/start-time/PGID checks; identity is rechecked before each signal; normal confirmed stop removes the entry; stale/mismatched/ambiguous records are not signaled; concurrent instances and orphan reaping are unsupported. | [step-1.4](evidence/step-1.4.md), [G1](evidence/step-1.4.md), [G3](evidence/step-3.1.md) |
 
 Final regression scope: one owner-approved native app build check, optional focused native test groups only with explicit owner approval, and the owner's integrated G3 sequence including Step 1.2a composition and Step 1.4 best-effort recovery. Repeat affected focused checks for fixes; do not demand a nonexistent workspace-wide suite or hosted-test infrastructure. Artifact proof remains a separate G-share boundary and does not imply permission to distribute.
 

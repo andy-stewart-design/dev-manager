@@ -12,6 +12,9 @@ struct dev_managerApp: App {
                 .onAppear {
                     lifecycle.runner = projectRunner
                 }
+                .task {
+                    await projectRunner.recoverStaleRuns()
+                }
         }
     }
 }

@@ -105,7 +105,7 @@ final class ProcessSupervisor {
             // A run is normally retained until this callback. If that invariant is
             // ever broken after a successful spawn, clean only the created identity.
             if let process {
-                _ = ProcessLauncher.stop(identity: ProcessIdentity(processID: process.processID, processGroupID: process.processGroupID))
+                _ = ProcessLauncher.stop(identity: ProcessIdentity(processID: process.processID, processGroupID: process.processGroupID, startTime: process.startTime))
             }
             return
         }
@@ -122,7 +122,8 @@ final class ProcessSupervisor {
             return
         }
 
-        run.identity = ProcessIdentity(processID: process.processID, processGroupID: process.processGroupID)
+        run.identity = ProcessIdentity(processID: process.processID, processGroupID: process.processGroupID, startTime: process.startTime)
+        RunJournal.record(projectID: project.id, identity: run.identity!)
         let inbox = OutputInbox { [weak self] stream, data, eof, droppedBytes in
             self?.receive(data: data, stream: stream, eof: eof, droppedBytes: droppedBytes, projectID: project.id, runID: runID)
         }
@@ -291,6 +292,7 @@ final class ProcessSupervisor {
     private func apply(stopResult: StopResult, projectID: UUID, runID: UUID) {
         guard let run = activeRuns[projectID], run.runID == runID else { return }
         if stopResult.groupGone, let exit = stopResult.exit {
+            RunJournal.remove(projectID: projectID)
             run.cleanupCompleted = true
             run.exit = exit
             run.cleanupError = nil

@@ -5,7 +5,9 @@ import Foundation
 final class ProjectRunner: ObservableObject {
     @Published private(set) var states: [UUID: RunState] = [:]
     @Published private(set) var isTerminating = false
+    @Published private(set) var isRecovering = true
     private var supervisor: ProcessSupervisor!
+    private var recoveryTask: Task<Void, Never>?
 
     init(shellEnvironment: ShellEnvironment? = nil) {
         self.supervisor = ProcessSupervisor(shellEnvironment: shellEnvironment) { [weak self] projectID, state in
@@ -15,9 +17,24 @@ final class ProjectRunner: ObservableObject {
 
     func state(for projectID: UUID) -> RunState? { states[projectID] }
     var activeProjectIDs: Set<UUID> { supervisor.activeProjectIDs }
-    func canStart(projectID: UUID) -> Bool { !isTerminating && supervisor.canStart(projectID: projectID) }
+    func canStart(projectID: UUID) -> Bool { !isTerminating && !isRecovering && supervisor.canStart(projectID: projectID) }
     func canStop(projectID: UUID) -> Bool { supervisor.canStop(projectID: projectID) }
     func canRemove(projectID: UUID) -> Bool { !isTerminating && supervisor.canRemove(projectID: projectID) }
+
+    func recoverStaleRuns() async {
+        guard isRecovering else { return }
+        if let recoveryTask {
+            await recoveryTask.value
+            return
+        }
+        let task = Task.detached(priority: .utility) {
+            RunJournal.recover()
+        }
+        recoveryTask = task
+        await task.value
+        recoveryTask = nil
+        isRecovering = false
+    }
 
     func beginTermination() -> Bool {
         guard !isTerminating else { return false }

@@ -13,6 +13,9 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         // The runner's main-actor portion only coordinates. Each blocking process-group
         // operation is explicitly detached inside stopAll, so quit never blocks AppKit.
         Task { @MainActor [weak self, weak runner] in
+            // Do not let a quit race the detached startup recovery and strand its
+            // pending journal decision.
+            await runner?.recoverStaleRuns()
             let succeeded = await runner?.stopAll() ?? true
             runner?.finishTermination(success: succeeded)
             self?.terminationRequested = false
