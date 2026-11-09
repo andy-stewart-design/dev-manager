@@ -89,8 +89,8 @@ Expected files:
 - `APP/Projects/Project.swift`, `APP/Projects/ProjectStore.swift` — simple Codable settings and stable project identity.
 - `APP/App/ContentView.swift` — split-view composition, selection/folder-picker coordination, and the small store-error banner.
 - `APP/Projects/Views/ProjectSidebar.swift` — project list/row and Add Project action.
-- `APP/Projects/Views/ProjectDetailView.swift` — project information, sections, and removal confirmation.
-- `APP/Projects/Views/CommandEditor.swift` — local command draft, field layout/validation, and save action.
+- `APP/Projects/Views/ProjectDetailView.swift` — selected-project `Execution` and `Output` sections plus the per-project settings-sheet entry point.
+- `APP/Projects/Views/ProjectSettingsSheet.swift` — captured-project read-only identity/folder, command draft with Save/Cancel, and bottom removal confirmation.
 - `APP/App/devManagerApp.swift` — initialize one store, not a background auto-starter.
 - `APP/Assets.xcassets/` — existing root asset catalog, unchanged.
 - `TESTS/ScaffoldSmokeTests.swift`, `TESTS/Projects/ProjectStoreTests.swift` — existing native tests organized under the test source root.
@@ -279,7 +279,8 @@ Review boundary: user-visible website states/browser choices composed with the r
 
 Expected files:
 
-- `APP/Projects/Views/ProjectDetailView.swift` — parent-owned Project, Execution, and Output section boundaries.
+- `APP/Projects/Views/ProjectDetailView.swift` — parent-owned `Execution` and `Output` section boundaries; project command/removal controls live in the per-project settings sheet.
+- `APP/Projects/Views/ProjectSettingsSheet.swift` — approved per-project settings modal and app-entry-only removal confirmation.
 - `APP/Discovery/Views/SiteStatusView.swift` — website status/action row content within Execution, including single/multiple URL choices.
 - `APP/Projects/Views/ProjectOutputView.swift` — bounded terminal output rendering within the parent-owned Output section.
 - Run/discovery state integration — last-moment run validity check and default-browser opening via native macOS API.

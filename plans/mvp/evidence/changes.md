@@ -1,5 +1,9 @@
 # Agreed planning changes
 
+## Project Settings alignment, Finder reveal, and footer removal
+
+The user requested the three annotated settings-sheet updates: align Name/Folder values to one leading column, make the Folder path reveal the selected folder in Finder, and move Remove Project to the left side of the footer beside right-aligned Cancel/Save. The implementation preserves read-only project metadata, command staging, fresh removal ownership checks, and app-entry-only confirmation. The compile-only build passed; manual layout and Finder-action validation remain pending. No app/Finder launch or tests were performed. Details are recorded in `step-2.3.md`.
+
 ## Step 2.1 source placement and compile compatibility
 
 The user authorized Step 2.1 after approving feature-oriented source organization, with `Discovery/` added when discovery work begins. Its expected files now use `Discovery/` in app and test sources rather than root-level parser files. The compile-only check also required existing runner-test constructors to pass the process start time introduced in 1.4; this aligns an existing API consumer and adds no process behavior or test execution. Requirement/acceptance IDs and parser-only scope are unchanged.
@@ -85,3 +89,10 @@ The owner approved “ok, let's do 1.2a” after the proposed split explicitly a
 - Actual user approval: the owner explicitly requested the approved layout update grouping ready-site status and browser controls in the existing `Execution` section, moving terminal output to its own `Output` section, and preserving all existing process/discovery behavior.
 - Implementation is limited to `Projects/Views/ProjectDetailView.swift`, `Discovery/Views/SiteStatusView.swift`, and the small `Projects/Views/ProjectOutputView.swift` extraction, plus the Step 2.3 evidence and expected-file note. No new requirement/acceptance ID, status pass, network check, browser behavior, or process behavior was added.
 - Owner visual review remains pending for grouping, narrow-window layout, and multisite behavior; existing Step 2.3 checkboxes and G2 gate remain unchanged.
+
+## Explicit approval: per-project settings sheet UI change
+
+- Actual user approval: the owner approved the proposed scoped UI change with `Yep Imgoodwiththis Letsdoit`.
+- Narrow implementation scope: the selected-project detail now keeps only `Execution` and `Output`; the toolbar gear is labeled/helped/accessibility-labeled `Project Settings` and opens a captured-identity modal sheet. The sheet shows selectable read-only project name/folder values, owns a draft command with one Save and one Cancel, validates nonempty trimmed input, preserves exact entered command text, warns that edits apply on the next Start while running, and keeps failed saves visible without dismissing.
+- Removal remains app-entry-only at the sheet bottom with the existing native confirmation text, fresh `runner.canRemove` check at confirmation action, stable-ID atomic store removal, and dismiss/reconciliation on success. No folder switching, renaming, file operations, process/network behavior, or global settings scene was added. The prior inline `CommandEditor` was removed rather than left as an unused competing save surface.
+- Verification boundary: one scoped compile-only app build is permitted; no app/browser launch, test execution, hosted tests, listeners, HTTP requests, dependencies, or runtime/manual claim is made here. User manual testing of the new sheet remains pending.

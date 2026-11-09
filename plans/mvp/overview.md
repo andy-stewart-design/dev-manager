@@ -8,7 +8,7 @@ It is intended for the owner and a small group of known users through direct dis
 
 ## How it is used
 
-Add a project folder, review a command such as `pnpm dev`, and press Start. Watch its output if needed, then use Open once the local website responds. If the command exposes several local websites, choose from their URLs.
+Add a project folder, open that project's toolbar gear to review or edit a command such as `pnpm dev`, and press Start from the main detail view. The main detail stays focused on `Execution` and `Output`; settings, Save/Cancel, and app-entry removal live in the per-project settings sheet. Watch output if needed, then use Open once the local website responds. If the command exposes several local websites, choose from their URLs.
 
 For example, Next.js may print both `http://localhost:3000` and a Network address. Only the localhost site belongs in the website choices. If port 3000 is occupied and the server moves to another port, discovery follows that run rather than using a saved address.
 

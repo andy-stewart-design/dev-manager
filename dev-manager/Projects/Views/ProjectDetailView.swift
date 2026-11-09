@@ -4,44 +4,31 @@ struct ProjectDetailView: View {
     let project: Project
     @ObservedObject var store: ProjectStore
     @ObservedObject var runner: ProjectRunner
-    @State private var isShowingRemoveConfirmation = false
+    @State private var settingsProject: Project?
 
     var body: some View {
         Form {
-            Section("Project") {
-                LabeledContent("Name", value: project.name)
-                LabeledContent {
-                    Text(project.folderPath)
-                        .textSelection(.enabled)
-                        .font(.body.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } label: {
-                    Text("Folder")
-                }
-
-                folderStatus
-            }
-
-            CommandEditor(project: project, store: store)
-
             executionSection
             outputSection
-
-            Section {
-                Button("Remove Project…", role: .destructive) {
-                    isShowingRemoveConfirmation = true
-                }
-                .disabled(store.isReadOnly || !runner.canRemove(projectID: project.id))
-            }
         }
         .formStyle(.grouped)
         .padding()
         .navigationTitle(project.name)
-        .alert("Remove \(project.name)?", isPresented: $isShowingRemoveConfirmation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Remove Project", role: .destructive, action: removeProject)
-        } message: {
-            Text("This removes only the saved project entry from Dev Manager. The folder and all files on disk will be left untouched.")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    // Capture the identity and values used to open the sheet. The
+                    // sheet saves by this stable ID, not by a later selection.
+                    settingsProject = project
+                } label: {
+                    Label("Project Settings", systemImage: "gearshape")
+                }
+                .accessibilityLabel("Project Settings")
+                .help("Project Settings")
+            }
+        }
+        .sheet(item: $settingsProject) { capturedProject in
+            ProjectSettingsSheet(project: capturedProject, store: store, runner: runner)
         }
     }
 
@@ -99,32 +86,6 @@ struct ProjectDetailView: View {
             Section("Output") {
                 ProjectOutputView(state: state)
             }
-        }
-    }
-
-    @ViewBuilder
-    private var folderStatus: some View {
-        if let validationError = project.validationError {
-            Label(validationError.localizedDescription, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .textSelection(.enabled)
-        } else {
-            Label("Folder is available.", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        }
-    }
-
-    private func removeProject() {
-        // The confirmation may outlive a state change in another window. Recheck on
-        // the main actor immediately before the synchronous store mutation.
-        guard runner.canRemove(projectID: project.id) else {
-            store.report(error: ProjectRunnerError.projectBusy)
-            return
-        }
-        do {
-            try store.removeProject(id: project.id)
-        } catch {
-            store.report(error: error)
         }
     }
 }
