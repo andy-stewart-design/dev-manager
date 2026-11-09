@@ -1,5 +1,9 @@
 # Step 2.1 evidence
 
+## Core integration acceptance
+
+The owner-approved initial HTTP baseline and final Stop/stale-state walkthrough are recorded in `step-2.3.md`. They provide core parser integration acceptance for the observed Vite/Next/Astro/custom-wrapper URLs; the core task is checked under the narrowed MVP boundary. Native parser cases remain compiled but unexecuted, and additional inputs are not claimed runtime-verified. Earlier pending core handoff notes below describe implementation-time status.
+
 ## Implementation
 
 - Added `dev-manager/Discovery/LocalURLCandidate.swift`: Foundation URL parsing/normalization restricted to HTTP/HTTPS `localhost`, `127.0.0.1`, and `::1`; rejects credentials, invalid ports, LAN/public/deceptive hosts, and non-web schemes; normalizes host case and an omitted root slash.

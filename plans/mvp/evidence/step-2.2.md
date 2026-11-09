@@ -1,5 +1,9 @@
 # Step 2.2 — listener attribution and local readiness
 
+## Core owner acceptance
+
+The owner approved startup-only checks without repeated HEAD polling, accepted the working HTTP discovery/browser flow, and finally reported that the delayed-start/Stop/fresh-run walkthrough worked as expected. See `step-2.3.md` for the actual owner report and narrowed MVP boundary. The core cancellation/readiness and final core verification tasks are checked. Silent-server fallback, multi-site, trusted HTTPS, expanded response fixtures, and additional native state tests remain unverified/deferred, not passed. Earlier pending core notes below are superseded only for this accepted baseline; no agent runtime actions were performed.
+
 ## Implemented
 
 - Per-run discovery now caches only successful startup verifications by exact URL plus the full owned listener identity (PID, OS start time, process group, and port). The coordinator continues bounded listener/announcement scans for new targets and ownership changes, but does not issue another HTTP request for an unchanged verified endpoint.

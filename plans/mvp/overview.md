@@ -10,7 +10,7 @@ It is intended for the owner and a small group of known users through direct dis
 
 Add a project folder, open that project's toolbar gear to review or edit a command such as `pnpm dev`, and press Start from the main detail view. The main detail stays focused on `Execution` and `Output`; settings, Save/Cancel, and app-entry removal live in the per-project settings sheet. Watch output if needed, then use Open once the local website responds. If the command exposes several local websites, choose from their URLs.
 
-For example, Next.js may print both `http://localhost:3000` and a Network address. Only the localhost site belongs in the website choices. If port 3000 is occupied and the server moves to another port, discovery follows that run rather than using a saved address.
+For example, Next.js may print both `http://localhost:3000` and a Network address. Only the localhost site belongs in the website choices. If port 3000 is occupied and the server moves to another port, discovery follows that run rather than using a saved address. The initial MVP targets one needed local website per project across Vite/Next.js/Astro HTTP flows. Multisite, silent-server fallback, and trusted-local-HTTPS compatibility checks are outside that initial acceptance boundary.
 
 Closing the window leaves development commands running; reopening restores access, while quitting the app normally stops them. Projects can be started and stopped independently. To begin another run, a user stops the project and starts it again manually; a successful new run intentionally has fresh logs and discovery, with no Restart button or cross-run history. On a later launch, the app may warn-only clean up a stale run when its recorded process identity is still positively verified; this is best-effort, not adoption or guaranteed crash cleanup.
 
@@ -22,7 +22,8 @@ Process lifecycle and website availability are distinct: a command can be runnin
 
 ## Scope and non-goals
 
-- In scope: native process controls, captured logs, package-manager-independent commands, automatic dynamic-port discovery, local-only browser opening, and bounded verified stale-run recovery.
+- In scope: native process controls, captured logs, package-manager-independent commands, automatic dynamic-port discovery, local-only browser opening, and bounded verified stale-run recovery. The initial baseline is one needed HTTP website per project with printed-URL discovery, owned readiness, browser flow, delayed startup, and Stop/stale-state safety.
+- Compatibility boundary: live verification of multisite choices, silent-server/socket fallback, and trusted local HTTPS is deferred beyond the initial MVP. Default TLS trust and nonlocal-redirect safeguards remain required. A running command with no discovered URL remains manageable; non-web is not a first-class workflow/category.
 - Collaboration model: the owner supplies the Xcode scaffold and participates heavily in manual validation. The emphasis is a useful working MVP with lightweight targeted automation, not a sophisticated test harness. The detailed recovery contract and composition followups are in the [specification](spec.md) and [implementation plan](plan.md).
 - Out of scope: full terminal emulation, Git operations, dependency installation, LAN/public websites, an in-app Restart action, cross-run log history, automatic restarts, and guaranteed cleanup after a crash or Force Quit.
 

@@ -31,10 +31,10 @@ This plan is an execution contract. Routine changes are limited to checking perf
 | --- | --- | --- | --- |
 | 0 | Owner-provided scaffold and reproducible native build baseline | Owner Xcode handoff | G0: inspect real targets/settings, build and launch the supplied app |
 | 1 | Useful project/process manager with logs, safe lifecycle, separated supervision/state composition, and bounded stale-run recovery | G0 | G1: two independent live projects, bounded cleanup, window/quit behavior, Step 1.2a composition, and best-effort Step 1.4 recovery review |
-| 2 | Automatic current-run localhost discovery and browser opening | G1 | G2: dynamic ports, silent-server fallback, filtering, stale-run isolation |
-| 3 | Owner-validated MVP and separate direct-distribution check | G2; owner access to real projects/certificates/signing as needed | G3: complete acceptance reconciliation; G-share: artifact suitability before sharing |
+| 2 | Automatic current-run localhost discovery and browser opening | G1 | G2 initial baseline: HTTP dynamic-port/browser flow, filtering, and stale-run isolation; compatibility checks remain separately deferred |
+| 3 | Owner acceptance of the initial baseline and separate direct-distribution check | G2 initial baseline; owner access to representative projects as needed | G3: baseline acceptance reconciliation; G-share: artifact suitability before sharing |
 
-Delivery boundary: one feature-complete change set, or one PR if the owner establishes Git and wants a PR. Phases are review increments, not separate PR requirements. No commit, push, sharing, or release is authorized by this plan.
+Delivery boundary: one feature-complete change set and, if the owner proceeds, one alpha app artifact for direct distribution outside the Mac App Store (a ZIP is a possible packaging form, subject to the separate Step 3.2 check). Phases are review increments, not separate PR requirements. No commit, push, sharing, or release is authorized by this plan.
 
 Atomic groups: each step's implementation, state consumers, target membership, and focused verification land/revert together. In particular, Step 1.2 must never expose a launcher without its stop/isolation behavior; Step 1.2a must keep supervision and main-actor state transitions together; Step 1.4 must keep journal writes, recovery decisions, and confirmed-cleanup removal together. There is no replacement implementation or schema migration to remove.
 
@@ -231,19 +231,19 @@ Tasks:
 - [x] Parse each run's stdout/stderr incrementally, carrying incomplete text/control sequences across chunks and stripping ANSI formatting for detection without discarding useful log output.
 - [x] Accept only HTTP/HTTPS on parsed `localhost`, `127.0.0.1`, or `::1`; reject LAN/public/deceptive hosts and non-web schemes. Preserve meaningful scheme/path; normalize the omitted root slash and repeated announcements.
 - [x] Add a compact table of Vite/Next.js examples, ANSI/chunk splits, loopback forms, Network/public/documentation URLs, deceptive hosts, and path-preserving deduplication cases. No snapshot or terminal-emulation harness.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence.
+- [x] Satisfy the core parser verification gate through the owner-approved integration baseline and record concise evidence; native case execution remains unrun and is not claimed passed.
 
 Verification:
 
-- Owner-approved only: if approved, use the actual Xcode procedure for `LocalURLCandidateTests`. Both supplied shapes should produce one local candidate; Next.js's Network line should be absent; root duplicates should collapse; legitimate base paths should survive; false-local inputs should fail. No Product > Test action is automatic.
-- Manual-first: review the test literals against the supplied screenshots. A passing parser check proves interpretation only, not a listening server or browser behavior.
+- Owner-approved only: native `LocalURLCandidateTests` execution remains optional and unchecked. The test cases compiled, but were not executed; parser core was validated through the owner's integration cases rather than a native-test execution gate. Extra unit cases remain unrun. No Product > Test action is automatic.
+- Manual-first: review the test literals against the supplied screenshots. The owner integration cases prove interpretation only in the observed flows, not a listening server or browser behavior for every table row.
 
-Completion gate: AC11's input policy is exercised with small native tests; candidates cannot independently enable Open or bypass ownership/readiness checks.
+Completion gate: AC11's parser policy is implemented and compiled, while native parser execution remains optional/unpassed; candidates cannot independently enable Open or bypass ownership/readiness checks.
 Evidence location: [evidence/step-2.1.md](evidence/step-2.1.md).
 
 ### Step 2.2 — Attribute listeners and verify local web readiness
 
-Requirements / acceptance: R6, R7, R8, R9; AC10; AC13 and AC15 (discovery/readiness portions; browser/exit composition in 2.3); AC17 (HTTPS probing implementation only; real trusted-HTTPS acceptance in 2.3); AC14 (async discovery cancellation portion).
+Requirements / acceptance: R6, R7, R8, R9; core discovery/readiness portions of AC13, AC14, and AC15, composed in 2.3. AC10 and AC17 are implemented compatibility capabilities whose live verification is deferred from the initial MVP baseline.
 Depends on: Step 2.1.
 Review boundary: automatic discovery engine integrated into current-run state, with no browser action before proof.
 
@@ -259,16 +259,16 @@ Tasks:
 - [x] Inspect listeners using bundled system `lsof` machine-readable output and owned live process identities, or a comparably narrow native implementation if the scaffold/platform requires it. Keep inspection off the UI thread, bounded/cancellable, and limited to tracked process groups/ordinary descendants; do not discover by globally selecting a port. Revalidate ownership before promoting any candidate, including log-announced URLs.
 - [x] Combine parser candidates with listener evidence. Derive loopback targets for owned wildcard listeners, prefer an announced scheme/base path, deduplicate alias/root fallback choices for the same endpoint, and avoid treating identifiable inspector/WebSocket-only ports as websites.
 - [x] Probe candidates locally using finite deadlines, limited concurrency, and default TLS trust. For socket-only unknown protocols try bounded HTTP/HTTPS checks rather than assuming HTTP. Do not follow nonlocal redirects or downgrade an explicitly advertised HTTPS URL. An actual HTTP response, including 404, means responding; a bare socket does not.
-- [x] Feed discovering/responding/no-site/error information into the run's website state, separate from process state. Continue scanning while active after the no-site notice; if listener inspection fails, show diagnostics without guessing an address or disabling process controls. A responding site is startup-verified rather than continuously health-monitored; final manual polling verification remains pending.
-- [ ] Cancel probes/scans and immediately invalidate results on Stop/exit/subsequent Start. Check project/run identity and current ownership before accepting results; extend the small state tests for an obsolete successful probe.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence.
+- [x] Feed discovering/responding/no-site/error information into the run's website state, separate from process state. Continue scanning while active after the no-site notice; if listener inspection fails, show diagnostics without guessing an address or disabling process controls. A responding site is startup-verified rather than continuously health-monitored; the owner accepted startup-only checking without ongoing HEAD requests.
+- [x] Cancel probes/scans and immediately invalidate results on Stop/exit/subsequent Start. Check project/run identity and current ownership before accepting results. The owner confirmed the delayed-start/Stop/fresh-run walkthrough; optional unit-state extensions were not added or executed.
+- [x] Satisfy the owner-approved core verification gate below and record concise evidence; deferred compatibility fixtures are not marked passed.
 
 Verification:
 
 - Owner-approved only: use the native build and focused existing parser/state checks, if explicitly approved, to assert an old run's successful probe cannot promote a candidate. Stub only the probe completion if necessary; do not build a fake networking platform or run hosted tests automatically.
-- Manual-first: owner approves a small disposable server command with no URL output, plus an unrelated server. Verify only the managed endpoint is detected. Exercise an announced-but-delayed endpoint, no-web command, plain non-HTTP listener, owned 404 response, and nonlocal redirect. Confirm the redirect is not fetched; review default TLS handling to ensure trust is not bypassed. Stop, then Start again after cleanup while checks are pending and observe stale results discarded. Real trusted-HTTPS proof belongs to 2.3, after the opening UI exists; configuration review here does not claim that live acceptance.
+- Manual-first core baseline: use the owner's Vite/Next/Astro HTTP projects and delayed wrapper to validate actual current-run URLs, readiness, startup-only probes, and Stop/fresh-run stale-state invalidation. A missing URL must not fail an otherwise valid running command. Silent-server, multi-site, trusted-HTTPS, and expanded response fixtures are deferred compatibility checks, not initial completion gates. Default TLS validation and refusing probe redirects remain source-reviewed safeguards, not claims of additional live fixture execution.
 
-Completion gate: AC10's automatic fallback works without manual URL entry; actual web responses and ownership are both required; cancellation cannot resurrect candidates. HTTPS probe code preserves default trust and advertised scheme, but real trusted-HTTPS acceptance remains explicitly incomplete until 2.3. Missing certificate access does not prevent implementing the opening UI.
+Completion gate: the owner-approved initial HTTP baseline composes actual responding owned endpoints with delayed startup and Stop/fresh-run invalidation. The recorded 2.3 walkthrough closes this core gate. AC10 and AC17 remain unverified compatibility checks; certificate or silent-server fixtures are not blockers. Default trust, local-only probes, and current-run ownership guards remain required.
 Evidence location: [evidence/step-2.2.md](evidence/step-2.2.md).
 
 ### Step 2.3 — Open the correct local site and validate dynamic ports
@@ -289,30 +289,30 @@ Tasks:
 
 - [x] Show process lifecycle and website discovery separately. Enable one Open action for one responding website, URL-labeled choices for multiple distinct websites, and informative no-site/probe errors without marking a running command failed.
 - [x] Open the selected current-run URL in the default browser. Recheck run validity at action time; clear choices immediately on Stop/exit/subsequent Start and report browser-open failures without changing the process.
-- [ ] With the owner, validate real Vite/Next.js startup and port rollover, plus one multi-site command. Use exact observed URLs rather than a saved/default port; retain only localhost/loopback choices.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence.
+- [x] With the owner, close the initial core baseline across the current Vite, Next.js, and Astro HTTP flows: one needed local website per project, printed local URL discovery, dynamic ports, owned readiness/browser flow, delayed startup, and Stop/start stale-state invalidation. A valid running command with no discovered URL remains manageable. This records the owner's walkthrough/report, not an agent-run test or deterministic micro-race proof.
+- [x] Record the owner-approved core verification and the prior positive core UI handoff in the evidence below; close Step 2.3's initial baseline without changing the deferred compatibility checks.
 
 Verification:
 
-- Owner-approved only: use the native build plus the small parser/state check set if explicitly approved; no UI automation or automatic hosted test run is added.
-- Manual-first: for each of the owner's Vite and Next.js projects, observe one local choice from the normal output and click through. Deliberately occupy its default port using an owner-controlled unrelated server, start the project, and verify the actual incremented port opens. Stop, then Start after changing availability and verify the new port, never the old unrelated listener. With a command exposing two local websites plus non-web output/listener, confirm exactly the eligible web choices. Verify no-site, delayed startup, 404, trusted HTTPS, exit, and Stop-during-probe states through the actual UI. For HTTPS, the owner supplies a local server/certificate already trusted by the system; do not install certificates or change Keychain trust implicitly. Missing trusted-HTTPS prerequisites block AC17 and this full acceptance gate, not completion of the HTTP implementation tasks. The Next.js Network URL must never appear as a choice.
+- Owner-approved core report: the owner followed the delayed-start procedure (`DEV_SETUP_DELAY_MS=12000 pnpm dev`, Start, Stop after about one second, then wait) and the final Stop/stale-state walkthrough, including a fresh Start that did not inherit old Ready/Open state. The owner explicitly confirmed, "yep that all works as expected." This is owner-reported approval; no agent app launch, browser/network check, native test, or deterministic micro-race proof is claimed.
+- Deferred checks remain unchecked and are not part of the initial baseline gate: AC10 silent-server/socket fallback, AC12 multisite choice behavior, and AC17 trusted-local-HTTPS acceptance. Additional AC15 response/HTTPS fixtures remain deferred. The existing default TLS trust, nonlocal-redirect guard, exit invalidation, and missing-URL/non-failing-process behavior remain implementation/source-reviewed safety and state invariants.
 
-Completion gate: real browsers receive the actual current-run local URLs; both reference servers pass dynamic-port checks; multiple-site and stale-action behavior compose with process control. Parser-only or mock-only proof is insufficient.
+Completion gate: the initial baseline composes current-run HTTP discovery, dynamic-port/browser flow, owned readiness, delayed startup, and Stop/stale invalidation for the owner's Vite/Next/Astro coverage. AC10, AC12, and AC17 are explicitly not passed and are not G2/G3 release blockers for this initial baseline. Parser native execution and expanded response fixtures remain unverified; no broader compatibility claim is made.
 Evidence location: [evidence/step-2.3.md](evidence/step-2.3.md).
 
-Phase exit gate **G2**: after Step 2.3 checks, repeat one complete add/start/discover/open/stop-then-start/stop cycle for each real reference tool, with a default-port collision in at least one cycle per tool. Include the no-output fallback and another project running independently. Require local-only choices, responding owned endpoints, no stale browser action, and no orphan ordinary children. Record G2 in `evidence/step-2.3.md` before Phase 3 or supervised approval to advance. Socket fallback is required, not a future substitute for entering a fixed URL.
+Phase exit gate **G2**: the initial-baseline portion of G2 is recorded in `evidence/step-2.3.md` from the owner's accepted core walkthrough and prior positive core UI handoff. It covers current-run HTTP URL discovery, dynamic ports, owned readiness/browser flow, delayed startup, and Stop/stale invalidation; it does not require the unchecked AC10, AC12, or AC17 compatibility checks. This is not release approval. Socket fallback, multisite, and trusted HTTPS remain implemented but unverified compatibility checks.
 
 ## Phase 3 — Owner acceptance and optional sharing boundary
 
-Outcome: a manually demonstrated MVP with concrete acceptance evidence, and a separate artifact check before any personal distribution.
-Depends on: G2; owner time, installed toolchains, representative projects, and trusted-local-HTTPS access for complete acceptance. Signing/notarization credentials block sharing work only.
+Outcome: owner reconciliation of the initial baseline, with a separate artifact check before any personal distribution.
+Depends on: G2 initial baseline; owner time and representative projects as needed. Trusted-local-HTTPS, multisite, and silent-server fixtures are not prerequisites for the initial baseline. Signing/notarization credentials block sharing work only.
 Review boundary: composition/acceptance and minimal owner-driven artifact preparation, not a polish pass or new testing platform.
 
 ### Step 3.1 — Perform the owner's integrated MVP walkthrough
 
-Requirements / acceptance: R1–R12; AC1–AC17 and AC19 by the ownership table below. AC16 artifact suitability remains in 3.2, separate from local functional proof.
-Depends on: Step 2.3 and G2.
-Review boundary: compact final manual acceptance and targeted fixes within this plan's scope. Material design changes require owner agreement.
+Requirements / acceptance: R1–R12; the accepted initial-baseline portions of AC7–AC9, AC13, AC14, and the existing contracts mapped below, plus prior evidence for the remaining core requirements. AC10, AC12, and AC17 remain explicitly deferred/unpassed; expanded AC15 fixtures remain deferred. AC16 artifact suitability remains in 3.2, separate from local functional proof.
+Depends on: Step 2.3 and G2 initial baseline.
+Review boundary: compact final reconciliation and targeted fixes within this plan's scope. Reuse the accepted Step 2.3 core proof rather than repeating the entire matrix; material design changes require owner agreement.
 
 Expected files:
 
@@ -321,17 +321,17 @@ Expected files:
 
 Tasks:
 
-- [ ] Have the owner use the established Xcode build procedure once as the default compilation check; run the two small native test groups only with explicit owner approval, and do not add a broader suite as a completion condition.
-- [ ] Have the owner walk through two saved projects from Finder launch: edit command, start, inspect logs, open actual sites, Stop then Start manually, close/reopen the window, stop independently, and Quit. Include one occupied-port scenario, errors, retained settings on relaunch, fresh logs on the next Start, and the Step 1.2a supervision/state composition.
-- [ ] Reconcile every acceptance ID against its owning evidence, including Step 1.4's warning-only stale-run recovery and AC19. Reuse meaningful earlier live observations rather than repeat every negative fixture; repeat lifecycle/isolation and dynamic-port checks in the final composed app. Missing real-project, trusted-HTTPS, environment, or approved recovery-fixture access remains visible as a blocked acceptance, never a fabricated pass.
-- [ ] Satisfy the verification and completion gate below, and record concise evidence and the owner's actual feedback without claiming release approval.
+- [x] Reconcile the existing compile/source evidence and the owner's reported core walkthrough instead of starting a new test round, Finder pass, or broad compatibility suite.
+- [x] Carry forward the accepted Step 2.3 baseline and the latest Step 1.4 owner acceptance, distinguishing owner-reported behavior from agent-run checks and preserving earlier gate history.
+- [x] Reconcile every acceptance ID against its owning evidence, explicitly retaining the deferred/unpassed AC10, AC12, AC17, and expanded AC15 checks. Do not convert unreported manual matrices, native-test execution, or compatibility fixtures into passes.
+- [x] Record the owner's latest velocity direction and approval context, and close the core owner-acceptance reconciliation without claiming release, sharing, or artifact approval.
 
 Verification:
 
-- Owner-approved only: use the scaffold-derived native build procedure and, if explicitly approved, the focused parser/run-state/journal checks. These prove compilation and covered pure/state behavior, not live framework compatibility; no hosted test command runs automatically.
-- Manual: the owner performs the integrated sequence above using approved projects/ports and the bounded recovery review; cross-check actual child/listener cleanup and unrelated-server survival. Confirm no project/shell file edits and no automatic command startup on relaunch. Distinguish newly observed results from links to earlier evidence.
+- Documentation-only reconciliation: reuse the existing compile/source evidence and owner-reported walkthroughs in `evidence/step-2.3.md` and `evidence/step-1.4.md`. No new app launch, browser/Finder action, process check, native test, hosted test, or broad suite is required or claimed.
+- The final exported-artifact Finder launch, signature/notarization, credentials, and sharing checks remain Step 3.2 work and are not part of this gate.
 
-Completion gate: G3 functional acceptance requires evidence for AC1–AC15, AC17, AC19 (including the bounded best-effort recovery review), and the runtime portion of AC16, with no unresolved process-isolation, stale-run, or journal-ownership defect. AC16's artifact/pre-sharing portion is assessed only in 3.2/G-share and does not block G3. Missing functional or owner-approved recovery checks keep this verification task unchecked. A partial working HTTP or recovery demonstration may be shown to the owner without representing it as full functional or distribution acceptance.
+Completion gate: the Step 3.1/G3 core reconciliation is complete using the existing evidence. The initial baseline may reuse the accepted Step 2.3 core proof and Step 1.4 owner acceptance; it does not require the deferred AC10, AC12, or AC17 checks or the expanded AC15 fixture matrix. Those IDs remain unchecked/unpassed, as do any unreported manual matrices and optional native-test executions. AC16 artifact suitability and all release/sharing approval remain separate Step 3.2/G-share work; no release approval is implied.
 Evidence location: [evidence/step-3.1.md](evidence/step-3.1.md).
 
 ### Step 3.2 — Check a direct-distribution artifact before sharing
@@ -361,7 +361,7 @@ Verification:
 Completion gate: **G-share** requires a checked artifact, current-user runtime behavior, and owner-controlled distribution decision; signature acceptance alone does not replace G3. No sharing or release is performed by this step.
 Evidence location: [evidence/step-3.2.md](evidence/step-3.2.md).
 
-Phase exit gates: after Step 3.1, assess **G3** using the final acceptance map and record the result in `evidence/step-3.1.md`; do not conflate it with release approval. If the owner proceeds toward sharing, assess **G-share** after Step 3.2 checks and record it in `evidence/step-3.2.md`. Supervised approvals happen only after the applicable gate is assessed.
+Phase exit gates: **G3 core reconciliation is closed in `evidence/step-3.1.md`** using the existing acceptance map and owner-reported evidence; it is not release approval. If the owner proceeds toward sharing, assess **G-share** only after the separate Step 3.2 checks and record it in `evidence/step-3.2.md`. Supervised approvals happen only after the applicable gate is assessed.
 
 ## Final acceptance
 
@@ -375,21 +375,21 @@ Each row names the owning proof, not a progress field. G3 reconciles these notes
 | AC4 | 1.2 + 1.2a; G1/G3 isolation | Stop cleans owned children; a later manual Start begins only after cleanup; other project and unrelated server survive; supervision/state composition preserves ownership. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [G1](evidence/step-1.4.md), [G3](evidence/step-3.1.md) |
 | AC5 | 1.2 + 1.2a; G1/G3 lifetime | Window close preserves work; Quit performs bounded escalation and exposes cleanup failure through the existing supervisor/state boundary. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [G1](evidence/step-1.4.md), [G3](evidence/step-3.1.md) |
 | AC6 | 1.2; G1/G3 composition | Heavy stdout/stderr stays bounded/inspectable without freezing controls; logs remain available after Stop or exit until the next Start, which begins a fresh bounded buffer. | [step-1.2](evidence/step-1.2.md), [G1](evidence/step-1.4.md), [G3](evidence/step-3.1.md) |
-| AC7 | 2.3; G2 | Real Vite produces one verified local Open action. | [step-2.3](evidence/step-2.3.md) |
-| AC8 | 2.3; G2 | Real Next.js produces one local Open action, excluding Network URL. | [step-2.3](evidence/step-2.3.md) |
-| AC9 | 2.3; G2/G3 port rollover | Both frameworks' actual incremented/current-run ports open; unrelated/old port never substituted. | [step-2.3](evidence/step-2.3.md), [G3](evidence/step-3.1.md) |
-| AC10 | 2.2; G2 fallback composition | Silent owned HTTP server is discovered automatically; unrelated server excluded. | [step-2.2](evidence/step-2.2.md), [G2](evidence/step-2.3.md) |
-| AC11 | 2.1 | Small native parser table proves local filtering, chunk/ANSI handling, and deduplication. | [step-2.1](evidence/step-2.1.md) |
-| AC12 | 2.3 | Two distinct local websites are choices; non-web listener is absent; each opens correctly. | [step-2.3](evidence/step-2.3.md) |
-| AC13 | 2.2 + 2.3 | No-web command stays manageable; delayed endpoint is not openable until responding. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
-| AC14 | 1.2 + 1.2a + 2.2 + 2.3; G1/G3 composition | Stop/startup and pending old probes cannot create overlapping runs or stale actions; async ownership remains safe across the supervision boundary. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [G1](evidence/step-1.4.md), [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
-| AC15 | 2.2 + 2.3 | Exit clears actions; 404 counts as responding; nonlocal redirects not fetched; TLS errors not bypassed. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
+| AC7 | 2.3; G2 initial baseline | Owner-reported Vite HTTP flow produces one verified local Open action; this is not an agent-run test claim. | [step-2.3](evidence/step-2.3.md) |
+| AC8 | 2.3; G2 initial baseline | Owner-reported Next.js HTTP flow produces one local Open action, excluding Network URL; this is not a universal framework claim. | [step-2.3](evidence/step-2.3.md) |
+| AC9 | 2.3; G2 initial baseline | Owner-reported current/dynamic-port flow opens the current run rather than an old/unrelated port. | [step-2.3](evidence/step-2.3.md) |
+| AC10 | 2.2; deferred from G2 initial baseline | Silent owned HTTP/socket fallback remains implemented but unverified and is not an initial-baseline release blocker. | [step-2.2](evidence/step-2.2.md), [G2](evidence/step-2.3.md) |
+| AC11 | 2.1 | Parser cases compiled but were not executed; parser core was validated through owner integration cases and extra unit cases remain unrun. | [step-2.1](evidence/step-2.1.md) |
+| AC12 | 2.3; deferred from G2 initial baseline | Multisite choices remain implemented but unverified and are not an initial-baseline release blocker. | [step-2.3](evidence/step-2.3.md) |
+| AC13 | 2.2 + 2.3; initial baseline portion | Delayed startup and graceful no-site behavior remain manageable; non-web is not a first-class MVP workflow/category. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
+| AC14 | 1.2 + 1.2a + 2.2 + 2.3; G1/G3 composition | Owner-reported Stop/stale-state walkthrough passes for the core baseline; this is not deterministic micro-race proof. | [step-1.2](evidence/step-1.2.md), [step-1.2a](evidence/step-1.2a.md), [G1](evidence/step-1.4.md), [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
+| AC15 | 2.2 + 2.3; partial core/invariant coverage | Exit invalidation, default TLS trust, and nonlocal-redirect safety remain implemented/source-reviewed; additional response and HTTPS fixtures are deferred. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC16 | 0.1/1.2 runtime; 3.2 G-share | Non-sandboxed current-user workflow and checked direct-distribution artifact before sharing. | [step-0.1](evidence/step-0.1.md), [step-1.2](evidence/step-1.2.md), [G-share](evidence/step-3.2.md) |
-| AC17 | 2.2 + 2.3 | Already trusted local HTTPS responds and opens as HTTPS without downgrade/trust bypass. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
+| AC17 | 2.2 + 2.3; deferred from G2 initial baseline | Trusted local HTTPS remains implemented but unverified and is not an initial-baseline release blocker. | [step-2.2](evidence/step-2.2.md), [step-2.3](evidence/step-2.3.md) |
 | AC18 | 1.1; G3 relaunch/removal composition | Command is leading-aligned; cancel is nonmutating; confirmed stable-ID removal changes only app settings; failed save retains entry/selection; folder/file bytes remain unchanged. | [step-1.1](evidence/step-1.1.md), [G3](evidence/step-3.1.md) |
 | AC19 | 1.4; G1/G3 recovery composition | One atomic post-spawn journal entry supports warning-only recovery only after positive PID/start-time/PGID checks; identity is rechecked before each signal; normal confirmed stop removes the entry; stale/mismatched/ambiguous records are not signaled; concurrent instances and orphan reaping are unsupported. | [step-1.4](evidence/step-1.4.md), [G1](evidence/step-1.4.md), [G3](evidence/step-3.1.md) |
 
-Final regression scope: one owner-approved native app build check, optional focused native test groups only with explicit owner approval, and the owner's integrated G3 sequence including Step 1.2a composition and Step 1.4 best-effort recovery. Repeat affected focused checks for fixes; do not demand a nonexistent workspace-wide suite or hosted-test infrastructure. Artifact proof remains a separate G-share boundary and does not imply permission to distribute.
+Final regression scope: Step 3.1 reuses the existing owner-reported walkthrough and compile/source evidence rather than opening a new audit or retesting round. Future regressions may use one owner-approved native app build and optional focused native checks only with explicit approval; do not demand a nonexistent workspace-wide suite or hosted-test infrastructure. Artifact proof remains a separate Step 3.2/G-share boundary and does not imply permission to distribute.
 
 ## Rollback and recovery
 
@@ -404,6 +404,6 @@ Final regression scope: one owner-approved native app build check, optional focu
 
 - Full UI automation, CI, stress/soak infrastructure, and a broad shell/version-manager matrix are deferred until real usage justifies them. This does not waive the focused isolation, rollover, cancellation, and shutdown checks above.
 - Crash-proof supervision, detached-daemon ownership, arbitrary external/container services, LAN/public/custom-domain discovery, custom HTTPS trust, and deep application health remain outside the governing MVP scope.
-- Tester-machine launch and notarization assessment wait for owner access/approval in 3.2; they block suitability for sharing, not a local MVP demonstration. Trusted local HTTPS is not waived: unavailable prerequisites keep its acceptance checks blocked.
+- Tester-machine launch and notarization assessment wait for owner access/approval in 3.2; they block suitability for sharing, not a local MVP demonstration. Trusted local HTTPS remains deferred/unverified compatibility coverage, not an initial-MVP completion blocker; default certificate validation must remain enabled.
 
 Execution-time blockers, results, skipped/waived checks, and accepted deviations belong in the predetermined evidence notes, not mutable plan status. Stop after planning until the owner explicitly begins the next workflow.

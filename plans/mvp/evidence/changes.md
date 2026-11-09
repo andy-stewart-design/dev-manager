@@ -1,5 +1,11 @@
 # Agreed planning changes
 
+## Narrowed initial MVP acceptance and final Stop/stale check
+
+After the owner questioned whether the compatibility matrix belonged in the MVP, the agreed initial boundary became their working Vite/Next/Astro HTTP projects and custom delayed wrapper, with one needed website per project, actual dynamic URLs, owned startup readiness, browser actions, and Stop/stale-state safety. Dedicated non-web workflows are not an MVP category; an undiscovered URL still must not fail a valid running command. Multi-site (AC12), silent-server fallback (AC10), trusted HTTPS (AC17), and expanded response fixtures are deferred verification—not removed features or passed checks. Existing local-only ownership, default TLS trust, and refusing probe redirects remain safeguards.
+
+The owner asked how to perform the final manual check, received the delayed-start/Stop/fresh-run/Ready/Open procedure, and replied, “yep, that all works as expected.” The core 2.1/2.2 integration and 2.3/G2 baseline are therefore recorded complete. Native test execution and deferred compatibility remain unclaimed. Stable requirement/acceptance IDs are preserved; Phase 3 and sharing approval remain separate. This is documentation only, not a new app launch or test run.
+
 ## Explicit request: stabilize selected-project layout
 
 - Actual user request: keep the Execution row stable when the Ready browser action appears, and always show the selected project's Output section with a plain empty-state placeholder before the first run or when logs are empty. The implementation keeps existing discovery, browser, process, and output-retention behavior unchanged.
@@ -106,3 +112,11 @@ The owner approved “ok, let's do 1.2a” after the proposed split explicitly a
 
 - Actual user request: replace each generic folder icon with a hollow circle when not running and a filled circle only while running, while retaining folder validation feedback separately. The shared label keeps the actual phase title/tooltips/accessibility text (including Failed, Launching, and Stopping), preserves Execution phase colors, and applies an explicit white override only to the sidebar process icon; process polling, selection, output, and runner behavior remain unchanged.
 - Manual validation remains pending; no manual UI result is claimed. The approved compile-only build succeeded and is recorded in `evidence/step-2.3.md`.
+
+## Step 3.1 reconciliation and owner direction
+
+- Change: close Step 3.1/G3 as a documentation-only reconciliation of the existing compile/source record, the accepted Step 2.3 initial baseline, and the latest owner-reported Step 1.4 recovery acceptance. No new app, browser, Finder, process, native-test, hosted-test, or broad-suite action was performed; prior task history and unchecked/deferred cases remain intact.
+- The owner’s latest direction and approval context was: “I feel 3.1 done already... makes sense to create alpha I can distribute... not be beholden to plan more concerned velocity/testing realworld than process.” This records core owner-acceptance/reconciliation and a velocity preference, not release or sharing approval.
+- Narrow plan update: Step 3.1 tasks now reconcile existing evidence and owner-reported core walkthroughs rather than repeat testing, Finder review, or a broad matrix. AC10 silent fallback, AC12 multisite, AC17 trusted HTTPS, expanded AC15 fixtures, and unreported manual/native compatibility checks remain unpassed or unverified.
+- Step 3.2 remains the next separate block. Final exported-artifact Finder launch, signature/notarization, credential use, packaging/export details, and sharing/G-share approval are still unperformed and unclaimed. No artifact path, account identity, export command, release approval, or sharing pass was invented.
+- Delivery boundary is lightly narrowed to one owner-controlled alpha app artifact for direct distribution outside the Mac App Store; a ZIP is only a possible packaging form. Packaging availability and the actual export strategy remain Step 3.2 work.

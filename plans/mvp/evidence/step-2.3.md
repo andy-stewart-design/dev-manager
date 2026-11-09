@@ -1,5 +1,13 @@
 # Step 2.3 — Open the correct local site
 
+## Final owner acceptance — initial MVP baseline
+
+The owner accepted the core browser flow and UI, then performed the prescribed delayed-start/Stop/stale-state walkthrough with `DEV_SETUP_DELAY_MS=12000 pnpm dev`: stop during setup and wait beyond the delay, start a fresh run without inheriting old Ready/Open state, open the ready site, and stop after Ready. Their final report was, “yep, that all works as expected.” This is owner-reported manual acceptance, not an agent-run test or deterministic micro-race proof; an already-dispatched OS browser request cannot be recalled.
+
+Step 2.3 and the initial-baseline G2 gate are closed using that report, earlier owner Vite/Next/Astro HTTP/dynamic-port/browser observations, and the existing compile/source evidence. The core integration also closes the narrowed 2.1/2.2 parser/readiness gates. Earlier pending core handoff notes below are superseded by this acceptance; no new app, browser, server, or test was launched by the agent.
+
+AC10 silent-server fallback, AC12 multi-site choices, AC17 trusted HTTPS, expanded response-code/auth/redirect fixtures, and extra native parser/state execution remain deferred or unrun—not passed. The initial target is one needed HTTP website per project across the owner's actual stacks and custom wrapper, not a framework whitelist or universal compatibility guarantee. Missing-site graceful behavior, current-run ownership, default TLS trust, and refusing probe redirects remain implementation safeguards. Phase 3 reconciliation and sharing approval are separate and are not marked complete.
+
 ## Approved layout implementation
 
 - `dev-manager/Projects/Views/ProjectDetailView.swift` owns the `Execution` and `Output` section boundaries. Site status and browser actions are grouped in `Execution`; terminal output remains its own `Output` section, which is now always rendered for a selected project.
