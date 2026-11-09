@@ -28,3 +28,10 @@
 - Implemented only the three approved settings-sheet updates: explicit shared leading alignment for read-only Name/Folder rows; a disabled-when-missing monospaced Folder button that calls `NSWorkspace.shared.activateFileViewerSelecting([folderURL])`; and a footer with left-side destructive Remove plus right-side Cancel/Save.
 - The existing app-entry-only confirmation, fresh `runner.canRemove` guard, command staging, and store/remove error retention were preserved. No folder mutation, renaming, process, discovery, or browser behavior was changed.
 - Scoped compile-only build rerun after a small ShapeStyle inference fix: succeeded (exit status 0); Xcode emitted only the generic macOS placeholder-destination diagnostic. Manual visual layout and Finder-selection validation remain pending; no runtime action or test result is claimed.
+
+## Sidebar execution-status indicators
+
+- Implemented the requested shared status simplification: `circle.fill` only for `.running`, hollow `circle` otherwise; Execution keeps its existing phase colors, while the sidebar process icon uses an explicit white override. Phase titles, tooltips, accessibility labels, and the separate trailing orange folder warning remain intact.
+- Scoped compile-only build succeeded with the approved command below (no app launch, tests, browser/Finder action, listeners, HTTP, dependencies, or runtime behavior was exercised). Manual UI validation remains pending.
+
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -quiet -project dev-manager.xcodeproj -scheme dev-manager -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath /tmp/dev-manager-layout-build CODE_SIGNING_ALLOWED=NO build`

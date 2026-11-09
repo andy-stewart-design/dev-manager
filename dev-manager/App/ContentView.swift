@@ -12,9 +12,11 @@ struct ContentView: View {
             ProjectSidebar(
                 projects: store.projects,
                 selection: $selectedProjectID,
+                runPhases: runner.states.mapValues(\.phase),
                 isAddDisabled: store.isReadOnly,
                 onAdd: { isShowingFolderPicker = true }
             )
+            .navigationSplitViewColumnWidth(ideal: 280)
         } detail: {
             if let selectedProjectID,
                let project = store.projects.first(where: { $0.id == selectedProjectID }) {

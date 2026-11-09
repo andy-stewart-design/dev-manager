@@ -262,7 +262,7 @@ final class ProcessSupervisor {
         case .ready:
             run.initialized = true
             run.phase = .running
-            run.message = "Command is running."
+            run.message = ""
             run.initializationTask = nil
             run.siteDiscovery?.startScanning()
             publish(run)
@@ -342,7 +342,7 @@ final class ProcessSupervisor {
         run.siteDiscovery?.cancel()
         run.readers.forEach { $0.cancel() }
         run.phase = run.cleanupError == nil && run.phase != .failed ? .exited : .failed
-        if run.message == "Owned process group stopped." { run.message = "Stopped." }
+        if run.message == "Owned process group stopped." { run.message = "" }
         publish(run)
         activeRuns.removeValue(forKey: run.projectID)
     }

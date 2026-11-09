@@ -38,18 +38,12 @@ struct ProjectDetailView: View {
         let state = runner.state(for: project.id)
         Section("Execution") {
             HStack {
-                if let state {
-                    Label(state.phase.title, systemImage: state.phase == .failed ? "xmark.octagon" : "circle.fill")
-                        .foregroundStyle(state.phase == .failed ? .red : (state.isActive ? .blue : .secondary))
-                    if let message = state.message {
-                        Text(message)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                } else {
-                    Label("Not started", systemImage: "circle")
+                RunStatusLabel(phase: state?.phase)
+                if let message = state?.message {
+                    Text(message)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
                 Spacer()
                 if runner.canStop(projectID: project.id) {
