@@ -4,6 +4,11 @@ import SwiftUI
 struct ProvisioningView: View {
     @StateObject private var model = ProvisioningModel()
     @Environment(\.dismiss) private var dismiss
+    let onFixtureReady: (URL, String) -> Void
+
+    init(onFixtureReady: @escaping (URL, String) -> Void = { _, _ in }) {
+        self.onFixtureReady = onFixtureReady
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -50,13 +55,24 @@ struct ProvisioningView: View {
                     .textSelection(.enabled)
             }
 
+            if !model.installationOutput.isEmpty {
+                ScrollView {
+                    Text(model.installationOutput)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 90)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+            }
+
             HStack {
                 Button {
                     Task { await model.checkAgain() }
                 } label: {
                     Label("Check again", systemImage: "arrow.clockwise")
                 }
-                .disabled(model.isChecking || model.isRequestingCommandLineTools || model.isDownloadingHomebrew)
+                .disabled(model.isChecking || model.isRequestingCommandLineTools || model.isDownloadingHomebrew || model.isInstallingRuntime)
 
                 Button {
                     model.isShowingCommandLineToolsConsent = true
@@ -71,6 +87,25 @@ struct ProvisioningView: View {
                     Label("Download Homebrew.pkg…", systemImage: "shippingbox")
                 }
                 .disabled(!model.canRequestHomebrew)
+
+                Spacer()
+            }
+
+            HStack {
+                Button {
+                    model.isShowingRuntimeConsent = true
+                } label: {
+                    Label("Install runtime / prepare fixture", systemImage: "shippingbox.and.arrow.down")
+                }
+                .disabled(!model.canInstallRuntime)
+
+                if let fixtureURL = model.fixtureURL, let fixtureCommand = model.fixtureCommand {
+                    Button("Show fixture project", systemImage: "folder") {
+                        onFixtureReady(fixtureURL, fixtureCommand)
+                        dismiss()
+                    }
+                    .disabled(model.isInstallingRuntime)
+                }
 
                 Spacer()
             }
@@ -93,6 +128,18 @@ struct ProvisioningView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("macOS will show its own installer UI. Dev Manager does not collect a password and will not treat the request as installed. Complete or cancel Apple's dialog, then press Check again.")
+        }
+        .confirmationDialog(
+            "Install the pinned runtime and prepare the fixture?",
+            isPresented: $model.isShowingRuntimeConsent,
+            titleVisibility: .visible
+        ) {
+            Button("Install fnm, Node, and pnpm") {
+                Task { await model.installRuntimeAndPrepareFixture() }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Dev Manager will reuse usable tools, install only missing exact versions as the current user, and never edit shell files. Existing conflicting or unusable tools are left unchanged. The fixture is created under Application Support only after all checks pass.")
         }
         .confirmationDialog(
             "Download and open Homebrew.pkg?",

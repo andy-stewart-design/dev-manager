@@ -106,7 +106,7 @@ Tasks:
 
 - [x] Download the Apple Silicon package from Homebrew's official GitHub release location and open it with macOS Installer. Retain system signature/security checks; do not invoke a privileged command-line installer or create an alternate-user plist.
 - [x] Verify `/opt/homebrew/bin/brew` executes as the console user. Report launch/download/verification failures without advancing. Reopening the app must inspect the machine again rather than automatically relaunch an external installer.
-- [ ] Satisfy the verification and completion gate below and record concise evidence.
+- [x] Satisfy the verification and completion gate below and record concise evidence.
 
 Verification:
 
@@ -138,10 +138,10 @@ Expected files:
 
 Tasks:
 
-- [ ] Reuse a working fnm or install it through Homebrew. Install the chosen Node version and exact pnpm version within that fnm runtime, using noninteractive ordinary-user processes. Detect incompatible existing state rather than automatically upgrading or deleting it.
-- [ ] Materialize a tiny `package.json` and Node built-in HTTP server, recording the exact versions. Register/reuse its folder with `ProjectStore.addProject(folderURL:command:)` and use the existing `ProjectRunner`/project UI. Avoid duplicate fixture entries on repeat.
-- [ ] Give only the fixture an absolute-path fnm execution command selecting the pinned runtime and running pnpm. Do not modify `ProcessLauncher`, global shell environment, or shell initialization files. Surface tool failures and block fixture launch when prerequisites fail.
-- [ ] Satisfy the verification and completion gate below and record concise evidence.
+- [x] Reuse a working fnm or install it through Homebrew. Install the chosen Node version and exact pnpm version within that fnm runtime, using noninteractive ordinary-user processes. Detect incompatible existing state rather than automatically upgrading or deleting it.
+- [x] Materialize a tiny `package.json` and Node built-in HTTP server, recording the exact versions. Register/reuse its folder with `ProjectStore.addProject(folderURL:command:)` and use the existing `ProjectRunner`/project UI. Avoid duplicate fixture entries on repeat.
+- [x] Give only the fixture an absolute-path fnm execution command selecting the pinned runtime and running pnpm. Do not modify `ProcessLauncher`, global shell environment, or shell initialization files. Surface tool failures and block fixture launch when prerequisites fail.
+- [x] Satisfy the verification and completion gate below and record concise evidence.
 
 Verification:
 

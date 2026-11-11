@@ -1,6 +1,6 @@
 # Step 1.2 evidence
 
-Status: implementation tasks are complete; Step 1.2 verification and the Phase 1 gate remain pending. No Homebrew download, Installer launch, build, test, or VM action was run by the agent.
+Status: implementation tasks and the user-owned Step 1.2 manual verification are complete; the Phase 1 gate is confirmed from the combined 1.1/1.2 evidence. No Homebrew download, Installer launch, build, test, or VM action was run by the agent.
 
 ## Implemented
 
@@ -17,14 +17,16 @@ Status: implementation tasks are complete; Step 1.2 verification and the Phase 1
 - Ran `git diff --check` successfully after the Step 1.2 edits.
 - Per the user's explicit no-build instruction, no `xcodebuild`, build, test, installer, provisioning, download, or app-launch command was run by the agent. Prior host build evidence remains in `step-1.1.md`; the user builds in Xcode and transfers Derived Data.
 
-## Pending user verification
+## User-owned manual verification
 
-The user should build the current Debug source in Xcode, transfer the resulting Derived Data app to the fresh supported VM, and manually:
+The user built and launched the current Debug artifact in Xcode and transferred it through the Tart shared folder. This is user-reported manual execution, not an agent-run planned CLI build; no `xcodebuild` result is claimed here.
 
-1. Confirm developer tools are ready, then open Setup and use the explicit Homebrew consent action.
-2. Observe the official `Homebrew.pkg` download and normal macOS Installer handoff. Confirm the app remains waiting and does not claim Homebrew is ready merely because Installer opened.
-3. Complete or cancel the Installer UI, return to the app, and press **Check again**. Only a successful current-user `/opt/homebrew/bin/brew --version` check may show Homebrew ready; cancellation, network/API/package errors, or a missing/unusable brew must remain incomplete with diagnostics.
-4. Quit and reopen the app, open Setup, and press **Check again**. Confirm developer tools and Homebrew are reconstructed from actual machine state, with no duplicate installer request. If retrying after an incomplete attempt, perform the manual check first.
-5. Record the console user/normal Installer authorization behavior and any relevant diagnostics without using Terminal or app-entered credentials.
+### Screenshot-observed state
 
-The Step 1.2 verification task and Phase 1 exit gate remain unchecked until those user-owned VM observations are recorded. The Step 1.1 cancellation/retry result is recorded separately in `step-1.1.md`; it is not being used as Homebrew installation evidence.
+The supplied screenshot (`/Users/andy/Library/Application Support/CleanShot/media/media_Skbfb7ileB/CleanShot 2026-11-11 at 7.14.28 AM@2x.png`) shows Apple developer tools ready and Homebrew `7.0.13`; it also shows `/opt/homebrew/bin/brew` ran as the current user. This records the visible state in that screenshot only and does not by itself establish the relaunch sequence.
+
+### User-reported relaunch observation
+
+The user subsequently explicitly confirmed that quitting and reopening the app recognized Homebrew without requesting another download. This supplies the relaunch/reuse observation required by AC4; no duplicate Homebrew handoff was reported.
+
+Together with Step 1.1's separately recorded user confirmation of real installer cancellation/retry, these observations satisfy the Step 1.2 verification task and the Phase 1 composition gate for the reported human-built/launched walkthrough. The user did not report Terminal use or an app-entered password. Installer authorization behavior beyond the supplied evidence remains unrecorded, and Step 1.1's environment-metadata caveat remains applicable.

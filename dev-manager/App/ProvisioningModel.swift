@@ -13,14 +13,20 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var isChecking = false
     @Published private(set) var isRequestingCommandLineTools = false
     @Published private(set) var isDownloadingHomebrew = false
+    @Published private(set) var isInstallingRuntime = false
+    @Published private(set) var installationOutput = ""
+    @Published private(set) var fixtureURL: URL?
+    @Published private(set) var fixtureCommand: String?
     @Published private(set) var message: String?
     @Published var isShowingCommandLineToolsConsent = false
     @Published var isShowingHomebrewConsent = false
+    @Published var isShowingRuntimeConsent = false
 
     private(set) var hasCompletedCheck = false
     private var commandLineToolsRequestNeedsCheck = false
     private var homebrewHandoffNeedsCheck = false
     private var checkGeneration = 0
+    private var fnmExecutableURL: URL?
 
     var supportedEnvironmentIssue: String? {
         Self.environmentIssue
@@ -36,17 +42,44 @@ final class ProvisioningModel: ObservableObject {
 
     var canRequestCommandLineTools: Bool {
         hasCompletedCheck && isSupportedEnvironment && !commandLineToolsRequestNeedsCheck &&
-            !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew && !developerToolsReady
+            !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew &&
+            !isInstallingRuntime && !developerToolsReady
     }
 
     var canRequestHomebrew: Bool {
         hasCompletedCheck && isSupportedEnvironment && developerToolsReady &&
             !homebrewHandoffNeedsCheck && !isChecking && !isRequestingCommandLineTools &&
-            !isDownloadingHomebrew && homebrewMissing
+            !isDownloadingHomebrew && !isInstallingRuntime && homebrewMissing
+    }
+
+    var canInstallRuntime: Bool {
+        guard hasCompletedCheck, isSupportedEnvironment, developerToolsReady, !isChecking,
+              !isRequestingCommandLineTools, !isDownloadingHomebrew, !isInstallingRuntime,
+              homebrewState?.isReady == true else { return false }
+        guard fnmState?.isReady == true || fnmState?.isMissing == true else { return false }
+        guard nodeState?.isReady == true || nodeState?.isMissing == true || nodeState?.isUnverified == true else { return false }
+        guard pnpmState?.isReady == true || pnpmState?.isMissing == true || pnpmState?.isUnverified == true else { return false }
+        return fixtureURL == nil && fixtureCommand == nil
     }
 
     private var homebrewMissing: Bool {
-        checks.first(where: { $0.id == .homebrew })?.state.isMissing == true
+        homebrewState?.isMissing == true
+    }
+
+    private var homebrewState: ProvisioningCheck.State? {
+        checks.first(where: { $0.id == .homebrew })?.state
+    }
+
+    private var fnmState: ProvisioningCheck.State? {
+        checks.first(where: { $0.id == .fnm })?.state
+    }
+
+    private var nodeState: ProvisioningCheck.State? {
+        checks.first(where: { $0.id == .node })?.state
+    }
+
+    private var pnpmState: ProvisioningCheck.State? {
+        checks.first(where: { $0.id == .pnpm })?.state
     }
 
     func checkAgain() async {
@@ -64,6 +97,7 @@ final class ProvisioningModel: ObservableObject {
         let runtime = await checkRuntime(using: fnm.executableURL)
 
         guard generation == checkGeneration else { return }
+        fnmExecutableURL = fnm.executableURL
         checks = [developerTools.check, homebrew.check, fnm.check, runtime.node, runtime.pnpm]
         isChecking = false
         hasCompletedCheck = true
@@ -243,9 +277,9 @@ final class ProvisioningModel: ObservableObject {
             )
         }
 
-        // Inspect fnm's local inventory first. Calling `fnm exec --using` for an
-        // absent version can install it, so no exec check is attempted until the
-        // exact version is reported as installed.
+        // Inspect fnm's local inventory first. `fnm exec --using` is a
+        // standalone execution check and fails when the requested version is
+        // absent; it does not install the version.
         let inspection = await run(fnmURL, arguments: ["list"], environment: Self.readOnlyRuntimeEnvironment)
         guard inspection.succeeded else {
             let failure = commandFailure("fnm list", result: inspection)
@@ -319,6 +353,478 @@ final class ProvisioningModel: ObservableObject {
         )
     }
 
+    func installRuntimeAndPrepareFixture() async {
+        guard canInstallRuntime else { return }
+        isInstallingRuntime = true
+        installationOutput = ""
+        defer { isInstallingRuntime = false }
+
+        guard homebrewState?.isReady == true else {
+            message = "Homebrew is not ready; runtime installation was not started."
+            return
+        }
+
+        var fnm = fnmExecutableURL
+        if fnm == nil {
+            message = "Installing fnm through /opt/homebrew/bin/brew…"
+            let result = await runInstallProcess(
+                executableURL: URL(fileURLWithPath: "/opt/homebrew/bin/brew"),
+                arguments: ["install", "fnm"],
+                environment: Self.installEnvironment,
+                label: "brew install fnm"
+            )
+            recordInstallationResult(result, label: "brew install fnm")
+            guard result.succeeded else {
+                message = "fnm installation failed. The fixture was not prepared; press Check again and retry after reviewing the output."
+                return
+            }
+            await checkAgain()
+            guard fnmState?.isReady == true, let detectedFNM = fnmExecutableURL else {
+                message = "fnm was not usable after Homebrew finished. The fixture was not prepared; review the fnm check and retry."
+                return
+            }
+            fnm = detectedFNM
+        }
+
+        guard fnmState?.isReady == true, let fnm else {
+            message = "The existing fnm installation needs attention. It was not replaced or upgraded."
+            return
+        }
+
+        if nodeState?.isMissing == true {
+            message = "Installing Node \(Self.nodeVersion) in fnm…"
+            let result = await runInstallProcess(
+                executableURL: fnm,
+                arguments: ["install", Self.nodeVersion],
+                environment: Self.runtimeInstallEnvironment,
+                label: "fnm install \(Self.nodeVersion)"
+            )
+            recordInstallationResult(result, label: "fnm install \(Self.nodeVersion)")
+            guard result.succeeded else {
+                message = "Node \(Self.nodeVersion) installation failed. Dependent steps were not started."
+                return
+            }
+            await checkAgain()
+        }
+
+        guard nodeState?.isReady == true else {
+            message = "Node \(Self.nodeVersion) is not usable through fnm. The existing installation was left unchanged."
+            return
+        }
+
+        if pnpmState?.isMissing == true {
+            message = "Installing pnpm \(Self.pnpmVersion) inside Node \(Self.nodeVersion)…"
+            let result = await runInstallProcess(
+                executableURL: fnm,
+                arguments: ["exec", "--using", Self.nodeVersion, "npm", "install", "--global", "pnpm@\(Self.pnpmVersion)"],
+                environment: Self.runtimeInstallEnvironment,
+                label: "npm install --global pnpm@\(Self.pnpmVersion)"
+            )
+            recordInstallationResult(result, label: "npm install --global pnpm@\(Self.pnpmVersion)")
+            guard result.succeeded else {
+                message = "pnpm \(Self.pnpmVersion) installation failed. The fixture was not prepared."
+                return
+            }
+            await checkAgain()
+        }
+
+        guard nodeState?.isReady == true, pnpmState?.isReady == true else {
+            message = "The pinned runtime is not fully usable. Existing conflicting or unusable tools were left unchanged; the fixture was not prepared."
+            return
+        }
+
+        do {
+            let fixture = try materializeFixture(using: fnm)
+            fixtureURL = fixture.folder
+            fixtureCommand = fixture.command
+            message = "Pinned runtime is ready. The dependency-free HTTP fixture is prepared; use Show fixture project to hand it to the existing project UI."
+        } catch {
+            message = "Fixture preparation failed without changing conflicting files: \(error.localizedDescription)"
+        }
+    }
+
+    private func recordInstallationResult(_ result: InstallProcessResult, label: String) {
+        var text = "\(label) exited with status \(result.terminationStatus)."
+        if result.timedOut { text = "\(label) timed out after \(Int(Self.installTimeout / 60)) minutes." }
+        if !result.stdout.isEmpty { text += "\nstdout:\n\(result.stdout)" }
+        if !result.stderr.isEmpty { text += "\nstderr:\n\(result.stderr)" }
+        installationOutput = String((installationOutput + "\n" + text).suffix(16_000))
+    }
+
+    private func materializeFixture(using fnm: URL) throws -> (folder: URL, command: String) {
+        let fileManager = FileManager.default
+        let folder = Self.fixtureFolderURL
+        let container = folder.deletingLastPathComponent()
+        let applicationSupport = container.deletingLastPathComponent()
+
+        // Inspect every owned path before creating a directory or file. In
+        // particular, lstat prevents an existing symlink from being followed.
+        guard try fixturePathKind(at: applicationSupport) == .directory else {
+            throw FixtureProvisioningError.conflictingPath(applicationSupport.path)
+        }
+        let containerKind = try fixturePathKind(at: container)
+        guard containerKind == .missing || containerKind == .directory else {
+            throw FixtureProvisioningError.conflictingPath(container.path)
+        }
+        let folderKind = try fixturePathKind(at: folder)
+        switch folderKind {
+        case .directory:
+            try validateExistingFixture(at: folder)
+            return (folder, "FNM_COREPACK_ENABLED=false \(shellQuote(fnm.path)) exec --using \(Self.nodeVersion) pnpm dev")
+        case .missing:
+            break
+        case .symlink, .regular, .other:
+            throw FixtureProvisioningError.conflictingPath(folder.path)
+        }
+
+        if containerKind == .missing {
+            try fileManager.createDirectory(at: container, withIntermediateDirectories: false)
+        }
+        guard try fixturePathKind(at: container) == .directory,
+              try fixturePathKind(at: folder) == .missing else {
+            throw FixtureProvisioningError.conflictingPath(folder.path)
+        }
+
+        let stage = container.appendingPathComponent(".Provisioning Fixture.\(UUID().uuidString).tmp", isDirectory: true)
+        guard try fixturePathKind(at: stage) == .missing else {
+            throw FixtureProvisioningError.conflictingPath(stage.path)
+        }
+        var stageExists = false
+        defer {
+            if stageExists { try? fileManager.removeItem(at: stage) }
+        }
+
+        try fileManager.createDirectory(at: stage, withIntermediateDirectories: false)
+        stageExists = true
+        for (name, contents) in Self.fixtureFiles {
+            let file = stage.appendingPathComponent(name)
+            guard try fixturePathKind(at: file) == .missing else {
+                throw FixtureProvisioningError.conflictingPath(file.path)
+            }
+            try writeNewFixtureFile(contents, at: file)
+        }
+
+        // Recheck the target immediately before the atomic directory move. The
+        // staged directory is app-owned and is the only path written so far.
+        guard try fixturePathKind(at: folder) == .missing else {
+            throw FixtureProvisioningError.conflictingPath(folder.path)
+        }
+        try fileManager.moveItem(at: stage, to: folder)
+        stageExists = false
+        return (folder, "FNM_COREPACK_ENABLED=false \(shellQuote(fnm.path)) exec --using \(Self.nodeVersion) pnpm dev")
+    }
+
+    private func validateExistingFixture(at folder: URL) throws {
+        let fileManager = FileManager.default
+        let expected = Set(Self.fixtureFiles.map { $0.name })
+        let actual = Set(try fileManager.contentsOfDirectory(atPath: folder.path))
+        guard actual == expected else {
+            throw FixtureProvisioningError.unexpectedContents(folder.path)
+        }
+        for (name, contents) in Self.fixtureFiles {
+            let file = folder.appendingPathComponent(name)
+            guard try fixturePathKind(at: file) == .regular else {
+                throw FixtureProvisioningError.conflictingPath(file.path)
+            }
+            let existing = try String(contentsOf: file, encoding: .utf8)
+            guard existing == contents else {
+                throw FixtureProvisioningError.unexpectedContents(file.path)
+            }
+        }
+    }
+
+    private func fixturePathKind(at url: URL) throws -> FixturePathKind {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else {
+            guard errno == ENOENT else {
+                throw FixtureProvisioningError.pathInspectionFailed(url.path, String(cString: strerror(errno)))
+            }
+            return .missing
+        }
+        let type = info.st_mode & S_IFMT
+        if type == S_IFLNK { return .symlink }
+        if type == S_IFDIR { return .directory }
+        if type == S_IFREG { return .regular }
+        return .other
+    }
+
+    private func writeNewFixtureFile(_ contents: String, at url: URL) throws {
+        guard let data = contents.data(using: .utf8) else {
+            throw FixtureProvisioningError.writeFailed(url.path, "fixture contents are not UTF-8")
+        }
+        let descriptor = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw FixtureProvisioningError.writeFailed(url.path, String(cString: strerror(errno)))
+        }
+        defer { close(descriptor) }
+        let written = data.withUnsafeBytes { bytes -> Int in
+            guard let baseAddress = bytes.baseAddress else { return 0 }
+            return write(descriptor, baseAddress, bytes.count)
+        }
+        guard written == data.count else {
+            throw FixtureProvisioningError.writeFailed(url.path, String(cString: strerror(errno)))
+        }
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func runInstallProcess(
+        executableURL: URL,
+        arguments: [String],
+        environment: [String: String],
+        label: String
+    ) async -> InstallProcessResult {
+        let timeout = Self.installTimeout
+        return await Task.detached(priority: .userInitiated) {
+            let collector = InstallOutputCollector()
+            let spawned: InstallSpawn
+            do {
+                spawned = try Self.spawnInstallProcess(
+                    executableURL: executableURL,
+                    arguments: arguments,
+                    environment: ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+                )
+            } catch {
+                return InstallProcessResult(
+                    succeeded: false,
+                    stdout: "",
+                    stderr: "\(label): \(error.localizedDescription)",
+                    terminationStatus: -1,
+                    timedOut: false
+                )
+            }
+
+            let group = DispatchGroup()
+            group.enter()
+            DispatchQueue.global(qos: .utility).async {
+                Self.drain(spawned.stdout, into: collector, stream: "stdout")
+                group.leave()
+            }
+            group.enter()
+            DispatchQueue.global(qos: .utility).async {
+                Self.drain(spawned.stderr, into: collector, stream: "stderr")
+                group.leave()
+            }
+
+            var timedOut = !Self.waitForInstallExit(spawned.processID, timeout: timeout)
+            if timedOut {
+                collector.append("\nTimed out; terminating the installer process group.\n", stream: "stderr")
+            }
+            let groupWasClean = Self.stopInstallGroup(
+                spawned.processID,
+                timeout: timedOut ? 5.0 : 2.0
+            )
+            let status = Self.reapInstallProcess(spawned.processID, timeout: 2.0)
+            if status == nil { timedOut = true }
+
+            // A descendant can retain a pipe after the leader exits. Never wait
+            // indefinitely for such a descriptor; close our owned read ends and
+            // give the drainers one final bounded opportunity to finish.
+            if group.wait(timeout: .now() + 2.0) == .timedOut {
+                spawned.stdout.closeFile()
+                spawned.stderr.closeFile()
+                _ = group.wait(timeout: .now() + 1.0)
+            } else {
+                spawned.stdout.closeFile()
+                spawned.stderr.closeFile()
+            }
+
+            let terminationStatus = status.map(Self.installExitCode) ?? -1
+            return InstallProcessResult(
+                succeeded: !timedOut && groupWasClean && terminationStatus == 0,
+                stdout: collector.stdout,
+                stderr: collector.stderr,
+                terminationStatus: terminationStatus,
+                timedOut: timedOut
+            )
+        }.value
+    }
+
+    nonisolated private static func spawnInstallProcess(
+        executableURL: URL,
+        arguments: [String],
+        environment: [String: String]
+    ) throws -> InstallSpawn {
+        let stdoutPipe = try makeInstallPipe()
+        let stderrPipe: (read: Int32, write: Int32)
+        do {
+            stderrPipe = try makeInstallPipe()
+        } catch {
+            close(stdoutPipe.read)
+            close(stdoutPipe.write)
+            throw error
+        }
+
+        let stdinFD = open("/dev/null", O_RDONLY)
+        guard stdinFD >= 0 else {
+            close(stdoutPipe.read); close(stdoutPipe.write)
+            close(stderrPipe.read); close(stderrPipe.write)
+            throw InstallProcessError.spawnFailed("/dev/null: \(String(cString: strerror(errno)))")
+        }
+        let normalizedStdin: Int32
+        do {
+            normalizedStdin = try normalizeInstallDescriptor(stdinFD)
+        } catch {
+            close(stdoutPipe.read); close(stdoutPipe.write)
+            close(stderrPipe.read); close(stderrPipe.write)
+            throw error
+        }
+
+        var actions = posix_spawn_file_actions_t(nil as OpaquePointer?)
+        var attributes = posix_spawnattr_t(nil as OpaquePointer?)
+        guard posix_spawn_file_actions_init(&actions) == 0 else {
+            close(normalizedStdin)
+            close(stdoutPipe.read); close(stdoutPipe.write)
+            close(stderrPipe.read); close(stderrPipe.write)
+            throw InstallProcessError.spawnFailed("could not initialize file actions")
+        }
+        guard posix_spawnattr_init(&attributes) == 0 else {
+            posix_spawn_file_actions_destroy(&actions)
+            close(normalizedStdin)
+            close(stdoutPipe.read); close(stdoutPipe.write)
+            close(stderrPipe.read); close(stderrPipe.write)
+            throw InstallProcessError.spawnFailed("could not initialize process-group attributes")
+        }
+        defer {
+            posix_spawn_file_actions_destroy(&actions)
+            posix_spawnattr_destroy(&attributes)
+        }
+
+        func closeParentDescriptors() {
+            close(normalizedStdin)
+            close(stdoutPipe.read); close(stdoutPipe.write)
+            close(stderrPipe.read); close(stderrPipe.write)
+        }
+
+        let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP)
+        guard posix_spawnattr_setflags(&attributes, flags) == 0,
+              posix_spawnattr_setpgroup(&attributes, 0) == 0,
+              posix_spawn_file_actions_adddup2(&actions, normalizedStdin, STDIN_FILENO) == 0,
+              posix_spawn_file_actions_adddup2(&actions, stdoutPipe.write, STDOUT_FILENO) == 0,
+              posix_spawn_file_actions_adddup2(&actions, stderrPipe.write, STDERR_FILENO) == 0,
+              posix_spawn_file_actions_addclose(&actions, normalizedStdin) == 0,
+              posix_spawn_file_actions_addclose(&actions, stdoutPipe.read) == 0,
+              posix_spawn_file_actions_addclose(&actions, stdoutPipe.write) == 0,
+              posix_spawn_file_actions_addclose(&actions, stderrPipe.read) == 0,
+              posix_spawn_file_actions_addclose(&actions, stderrPipe.write) == 0 else {
+            closeParentDescriptors()
+            throw InstallProcessError.spawnFailed("could not configure the installer process group or output streams")
+        }
+
+        let commandArguments = [executableURL.path] + arguments
+        var argv = commandArguments.map { strdup($0) }
+        argv.append(nil)
+        defer { argv.compactMap { $0 }.forEach { free($0) } }
+        var envp = environment.map { strdup("\($0.key)=\($0.value)") }
+        envp.append(nil)
+        defer { envp.compactMap { $0 }.forEach { free($0) } }
+
+        var processID: pid_t = 0
+        let result = argv.withUnsafeMutableBufferPointer { argvBuffer in
+            envp.withUnsafeMutableBufferPointer { envBuffer in
+                posix_spawn(
+                    &processID,
+                    executableURL.path,
+                    &actions,
+                    &attributes,
+                    argvBuffer.baseAddress,
+                    envBuffer.baseAddress
+                )
+            }
+        }
+        close(normalizedStdin)
+        close(stdoutPipe.write)
+        close(stderrPipe.write)
+        guard result == 0 else {
+            close(stdoutPipe.read)
+            close(stderrPipe.read)
+            throw InstallProcessError.spawnFailed(String(cString: strerror(result)))
+        }
+
+        return InstallSpawn(
+            processID: processID,
+            stdout: FileHandle(fileDescriptor: stdoutPipe.read, closeOnDealloc: true),
+            stderr: FileHandle(fileDescriptor: stderrPipe.read, closeOnDealloc: true)
+        )
+    }
+
+    nonisolated private static func makeInstallPipe() throws -> (read: Int32, write: Int32) {
+        var fds = [Int32](repeating: -1, count: 2)
+        guard pipe(&fds) == 0 else {
+            throw InstallProcessError.pipeFailed(String(cString: strerror(errno)))
+        }
+        do {
+            fds[0] = try normalizeInstallDescriptor(fds[0])
+            fds[1] = try normalizeInstallDescriptor(fds[1])
+            return (fds[0], fds[1])
+        } catch {
+            if fds[0] >= 0 { close(fds[0]) }
+            if fds[1] >= 0 { close(fds[1]) }
+            throw error
+        }
+    }
+
+    nonisolated private static func normalizeInstallDescriptor(_ descriptor: Int32) throws -> Int32 {
+        guard descriptor < 3 else { return descriptor }
+        let replacement = fcntl(descriptor, F_DUPFD_CLOEXEC, 3)
+        guard replacement >= 0 else {
+            throw InstallProcessError.pipeFailed("could not protect file descriptor: \(String(cString: strerror(errno)))")
+        }
+        close(descriptor)
+        return replacement
+    }
+
+    nonisolated private static func waitForInstallExit(_ processID: Int32, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            var info = siginfo_t()
+            let result = waitid(P_PID, id_t(processID), &info, WEXITED | WNOHANG | WNOWAIT)
+            if result == 0, info.si_pid != 0 { return true }
+            if result < 0, errno != EINTR { return false }
+            usleep(100_000)
+        }
+        return false
+    }
+
+    nonisolated private static func stopInstallGroup(_ processID: Int32, timeout: TimeInterval) -> Bool {
+        let hasMembers = { dm_group_has_non_zombie_members(processID, processID) != 0 }
+        guard hasMembers() else { return true }
+        _ = kill(-processID, SIGTERM)
+        let termDeadline = Date().addingTimeInterval(timeout)
+        while hasMembers() && Date() < termDeadline { usleep(50_000) }
+        if hasMembers() {
+            _ = kill(-processID, SIGKILL)
+            let killDeadline = Date().addingTimeInterval(1.0)
+            while hasMembers() && Date() < killDeadline { usleep(50_000) }
+        }
+        return !hasMembers()
+    }
+
+    nonisolated private static func reapInstallProcess(_ processID: Int32, timeout: TimeInterval) -> Int32? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var status: Int32 = 0
+        while Date() < deadline {
+            let result = waitpid(processID, &status, WNOHANG)
+            if result == processID { return status }
+            if result < 0, errno != EINTR { return nil }
+            usleep(50_000)
+        }
+        return nil
+    }
+
+    nonisolated private static func installExitCode(_ status: Int32) -> Int32 {
+        (status & 0x7f) == 0 ? (status >> 8) & 0xff : -1
+    }
+
+    nonisolated private static func drain(_ handle: FileHandle, into collector: InstallOutputCollector, stream: String) {
+        while true {
+            guard let data = try? handle.read(upToCount: 4096), !data.isEmpty else { break }
+            collector.append(String(decoding: data, as: UTF8.self), stream: stream)
+        }
+    }
+
     private func firstExecutable(candidates: [String]) -> URL? {
         firstExecutable(candidates: candidates.map(URL.init(fileURLWithPath:)))
     }
@@ -336,6 +842,7 @@ final class ProvisioningModel: ObservableObject {
     }
 
     private static let commandTimeout: TimeInterval = 8
+    private static let installTimeout: TimeInterval = 15 * 60
     private static let homebrewReleaseAPIURL = "https://api.github.com/repos/Homebrew/brew/releases/latest"
     private static let homebrewPackageName = "Homebrew.pkg"
     private static let officialHomebrewReleasePrefix = "https://github.com/Homebrew/brew/releases/download/"
@@ -355,13 +862,86 @@ final class ProvisioningModel: ObservableObject {
             url.pathComponents.last == homebrewPackageName
     }
 
-    private static let readOnlyRuntimeEnvironment: [String: String] = [
-        "FNM_COREPACK_ENABLED": "false",
-        "FNM_RESOLVE_ENGINES": "false",
-        "COREPACK_ENABLE_NETWORK": "0",
-        "COREPACK_DEFAULT_TO_LATEST": "0",
-        "COREPACK_ENABLE_PROJECT_SPEC": "0"
-    ]
+    private static var guiSafePATH: String {
+        let inherited = ProcessInfo.processInfo.environment["PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return inherited?.isEmpty == false ? inherited! : "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    }
+
+    private static var readOnlyRuntimeEnvironment: [String: String] {
+        [
+            "PATH": guiSafePATH,
+            "FNM_COREPACK_ENABLED": "false",
+            "FNM_RESOLVE_ENGINES": "false",
+            "COREPACK_ENABLE_NETWORK": "0",
+            "COREPACK_DEFAULT_TO_LATEST": "0",
+            "COREPACK_ENABLE_PROJECT_SPEC": "0"
+        ]
+    }
+
+    private static var installEnvironment: [String: String] {
+        [
+            "PATH": guiSafePATH,
+            "HOMEBREW_NO_AUTO_UPDATE": "1",
+            "HOMEBREW_NO_INSTALL_CLEANUP": "1",
+            "HOMEBREW_NO_ENV_HINTS": "1",
+            "NONINTERACTIVE": "1"
+        ]
+    }
+
+    private static var runtimeInstallEnvironment: [String: String] {
+        installEnvironment.merging([
+            "FNM_COREPACK_ENABLED": "false",
+            "COREPACK_ENABLE_NETWORK": "0",
+            "COREPACK_DEFAULT_TO_LATEST": "0",
+            "COREPACK_ENABLE_PROJECT_SPEC": "0",
+            "npm_config_yes": "true",
+            "npm_config_audit": "false",
+            "npm_config_fund": "false"
+        ]) { _, new in new }
+    }
+
+    private static var fixtureFolderURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Dev Manager", isDirectory: true)
+            .appendingPathComponent("Provisioning Fixture", isDirectory: true)
+    }
+
+    private static let fixturePackageJSON = """
+    {
+      \"name\": \"dev-manager-provisioning-fixture\",
+      \"private\": true,
+      \"version\": \"1.0.0\",
+      \"packageManager\": \"pnpm@12.18.0\",
+      \"engines\": { \"node\": \"24.22.2\" },
+      \"scripts\": { \"dev\": \"node server.js\" }
+    }
+    """
+
+    private static let fixtureServerJS = """
+    const http = require("node:http");
+
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      response.end("<h1>Dev Manager provisioning fixture</h1>");
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : "unknown";
+      console.log(`Dev Manager fixture: http://127.0.0.1:${port}/`);
+    });
+    """
+
+    private static let fixtureMarker = "dev-manager-provisioning-fixture-v1\n"
+
+    private static var fixtureFiles: [(name: String, contents: String)] {
+        [
+            (".dev-manager-fixture", fixtureMarker),
+            ("package.json", fixturePackageJSON),
+            ("server.js", fixtureServerJS),
+            (".node-version", "\(nodeVersion)\n")
+        ]
+    }
 
     private static var environmentIssue: String? {
         var issues: [String] = []
@@ -492,6 +1072,11 @@ struct ProvisioningCheck: Identifiable, Equatable {
             if case .missing = self { return true }
             return false
         }
+
+        var isUnverified: Bool {
+            if case .unverified = self { return true }
+            return false
+        }
     }
 
     let id: ID
@@ -499,6 +1084,90 @@ struct ProvisioningCheck: Identifiable, Equatable {
 
     static var all: [ProvisioningCheck] {
         ID.allCases.map { ProvisioningCheck(id: $0, state: .checking) }
+    }
+}
+
+private struct InstallProcessResult: Sendable {
+    let succeeded: Bool
+    let stdout: String
+    let stderr: String
+    let terminationStatus: Int32
+    let timedOut: Bool
+}
+
+private struct InstallSpawn: Sendable {
+    let processID: Int32
+    let stdout: FileHandle
+    let stderr: FileHandle
+}
+
+private enum InstallProcessError: LocalizedError {
+    case pipeFailed(String)
+    case spawnFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .pipeFailed(detail): return "Could not create installer output pipes: \(detail)"
+        case let .spawnFailed(detail): return "Could not launch the installer: \(detail)"
+        }
+    }
+}
+
+private final class InstallOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stdoutStorage = ""
+    private var stderrStorage = ""
+
+    var stdout: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return stdoutStorage
+    }
+
+    var stderr: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return stderrStorage
+    }
+
+    func append(_ text: String, stream: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        if stream == "stdout" {
+            stdoutStorage.append(text)
+        } else {
+            stderrStorage.append(text)
+        }
+        if stdoutStorage.count > 12_000 { stdoutStorage = String(stdoutStorage.suffix(12_000)) }
+        if stderrStorage.count > 12_000 { stderrStorage = String(stderrStorage.suffix(12_000)) }
+    }
+}
+
+private enum FixturePathKind: Equatable {
+    case missing
+    case directory
+    case regular
+    case symlink
+    case other
+}
+
+private enum FixtureProvisioningError: LocalizedError {
+    case conflictingPath(String)
+    case unexpectedContents(String)
+    case pathInspectionFailed(String, String)
+    case writeFailed(String, String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .conflictingPath(path):
+            return "The fixture path conflicts with an existing non-owned path and was left unchanged: \(path)"
+        case let .unexpectedContents(path):
+            return "An existing fixture path has unexpected contents and was left unchanged: \(path)"
+        case let .pathInspectionFailed(path, detail):
+            return "The fixture path could not be safely inspected and was left unchanged: \(path): \(detail)"
+        case let .writeFailed(path, detail):
+            return "The fixture file could not be created: \(path): \(detail)"
+        }
     }
 }
 

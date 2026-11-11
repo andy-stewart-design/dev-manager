@@ -56,7 +56,9 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $isShowingProvisioning) {
-            ProvisioningView()
+            ProvisioningView { folderURL, command in
+                handleFixtureHandoff(folderURL: folderURL, command: command)
+            }
         }
 #endif
         .onChange(of: store.projects) { _, projects in
@@ -69,6 +71,35 @@ struct ContentView: View {
             selectedProjectID = selectedProjectID ?? store.projects.first?.id
         }
     }
+
+#if DEBUG
+    private func handleFixtureHandoff(folderURL: URL, command: String) {
+        let normalizedPath = folderURL.standardizedFileURL.path
+        do {
+            if let existing = store.projects.first(where: { $0.folderURL.standardizedFileURL.path == normalizedPath }) {
+                guard existing.command == command else {
+                    throw FixtureProjectHandoffError.conflictingCommand(normalizedPath)
+                }
+                selectedProjectID = existing.id
+            } else {
+                let project = try store.addProject(folderURL: folderURL, command: command)
+                selectedProjectID = project.id
+            }
+        } catch {
+            store.report(error: error)
+        }
+    }
+    private enum FixtureProjectHandoffError: LocalizedError {
+        case conflictingCommand(String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .conflictingCommand(path):
+                return "The existing fixture project at \(path) has a user-modified command, so it was left unchanged."
+            }
+        }
+    }
+#endif
 
     private func handleFolderSelection(_ result: Result<[URL], Error>) {
         switch result {
