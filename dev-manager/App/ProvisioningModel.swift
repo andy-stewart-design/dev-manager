@@ -18,9 +18,16 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var fixtureURL: URL?
     @Published private(set) var fixtureCommand: String?
     @Published private(set) var message: String?
+    @Published private(set) var shellConfigurationStatus = "The optional fnm shell configuration has not been checked."
+    @Published private(set) var shellVerificationOutput = ""
+    @Published private(set) var isConfiguringShell = false
+    @Published private(set) var isVerifyingShell = false
+    @Published private(set) var isRestoringShell = false
     @Published var isShowingCommandLineToolsConsent = false
     @Published var isShowingHomebrewConsent = false
     @Published var isShowingRuntimeConsent = false
+    @Published var isShowingShellConfigurationConsent = false
+    @Published var isShowingShellRestoreConsent = false
 
     private(set) var hasCompletedCheck = false
     private var commandLineToolsRequestNeedsCheck = false
@@ -62,6 +69,22 @@ final class ProvisioningModel: ObservableObject {
         return fixtureURL == nil && fixtureCommand == nil
     }
 
+    var canConfigureShell: Bool {
+        hasCompletedCheck && isSupportedEnvironment && !isChecking && !isRequestingCommandLineTools &&
+            !isDownloadingHomebrew && !isInstallingRuntime && !isConfiguringShell && !isVerifyingShell &&
+            !isRestoringShell && fnmState?.isReady == true && nodeState?.isReady == true && pnpmState?.isReady == true
+    }
+
+    var canVerifyShell: Bool {
+        canConfigureShell && ProvisioningShellConfiguration.inspect().isConfigured
+    }
+
+    var canRestoreShell: Bool {
+        hasCompletedCheck && isSupportedEnvironment && !isChecking && !isRequestingCommandLineTools &&
+            !isDownloadingHomebrew && !isInstallingRuntime && !isConfiguringShell && !isVerifyingShell &&
+            !isRestoringShell && ProvisioningShellConfiguration.hasRecordedConfiguration()
+    }
+
     private var homebrewMissing: Bool {
         homebrewState?.isMissing == true
     }
@@ -83,7 +106,8 @@ final class ProvisioningModel: ObservableObject {
     }
 
     func checkAgain() async {
-        guard !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew else { return }
+        guard !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew &&
+                !isConfiguringShell && !isVerifyingShell && !isRestoringShell else { return }
         checkGeneration += 1
         let generation = checkGeneration
         hasCompletedCheck = false
@@ -103,10 +127,86 @@ final class ProvisioningModel: ObservableObject {
         hasCompletedCheck = true
         commandLineToolsRequestNeedsCheck = false
         homebrewHandoffNeedsCheck = !homebrew.check.state.isMissing
+        shellConfigurationStatus = ProvisioningShellConfiguration.inspect().message
         if let supportedEnvironmentIssue {
             message = "Inspection complete. Machine-changing actions are disabled: \(supportedEnvironmentIssue)"
         } else {
             message = "Inspection complete. Installation requests are never treated as completion; press Check again after Apple's UI finishes."
+        }
+    }
+
+    func configureShell() throws {
+        guard canConfigureShell, let fnmExecutableURL else {
+            throw ProvisioningShellConfiguration.ConfigurationError.unsupported("the supported environment and pinned fnm/Node/pnpm runtime are not ready")
+        }
+        isConfiguringShell = true
+        defer { isConfiguringShell = false }
+        do {
+            shellConfigurationStatus = try ProvisioningShellConfiguration.configure(using: fnmExecutableURL, nodeVersion: Self.nodeVersion)
+            message = "Optional shell configuration completed. It is not required for the app's fixture."
+        } catch {
+            shellConfigurationStatus = error.localizedDescription
+            message = error.localizedDescription
+            throw error
+        }
+    }
+
+    func verifyFreshShell() async {
+        guard canVerifyShell else { return }
+        isVerifyingShell = true
+        defer { isVerifyingShell = false }
+        do {
+            let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            let shell = try ShellEnvironment.currentZsh(homeDirectory: home, zdotdir: home)
+            var environment = shell.environment
+            environment["FNM_COREPACK_ENABLED"] = "false"
+            environment["COREPACK_ENABLE_NETWORK"] = "0"
+            environment["COREPACK_DEFAULT_TO_LATEST"] = "0"
+            environment["COREPACK_ENABLE_PROJECT_SPEC"] = "0"
+            let script = """
+            set -e
+            printf 'fnm=%s\\n' \"$(command -v fnm)\"
+            printf 'fnm_version=%s\\n' \"$(fnm --version)\"
+            printf 'node=%s\\n' \"$(command -v node)\"
+            printf 'node_version=%s\\n' \"$(node --version)\"
+            printf 'pnpm=%s\\n' \"$(command -v pnpm)\"
+            printf 'pnpm_version=%s\\n' \"$(pnpm --version)\"
+            """
+            let result = await run(URL(fileURLWithPath: "/bin/zsh"), arguments: ["-i", "-c", script], environment: environment)
+            let output = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\nstderr:\n")
+            shellVerificationOutput = String(output.suffix(8_000))
+            guard result.succeeded else {
+                throw ProvisioningShellConfiguration.ConfigurationError.conflict("fresh interactive Zsh verification failed: \(commandFailure("/bin/zsh -i -c", result: result))")
+            }
+            let values = result.stdout.split(whereSeparator: \.isNewline).reduce(into: [String: String]()) { values, line in
+                let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { return }
+                values[parts[0]] = parts[1]
+            }
+            guard values["node_version"] == "v\(Self.nodeVersion)", values["pnpm_version"] == Self.pnpmVersion,
+                  values["fnm"]?.hasPrefix("/") == true, values["node"]?.hasPrefix("/") == true,
+                  values["pnpm"]?.hasPrefix("/") == true else {
+                throw ProvisioningShellConfiguration.ConfigurationError.conflict("fresh interactive Zsh resolved unexpected fnm, Node, or pnpm paths/versions; no shell file was changed")
+            }
+            shellConfigurationStatus = "Fresh interactive Zsh verified fnm, Node \(Self.nodeVersion), and pnpm \(Self.pnpmVersion). This check used /bin/zsh -i -c and did not use a login shell."
+            message = shellConfigurationStatus
+        } catch {
+            shellConfigurationStatus = error.localizedDescription
+            message = error.localizedDescription
+        }
+    }
+
+    func restoreShell() throws {
+        guard canRestoreShell else { return }
+        isRestoringShell = true
+        defer { isRestoringShell = false }
+        do {
+            shellConfigurationStatus = try ProvisioningShellConfiguration.restore()
+            message = "The optional shell configuration was restored without changing unrelated shell content."
+        } catch {
+            shellConfigurationStatus = error.localizedDescription
+            message = error.localizedDescription
+            throw error
         }
     }
 

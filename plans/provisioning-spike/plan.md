@@ -166,9 +166,9 @@ Expected files:
 
 Tasks:
 
-- [ ] Explain the separate shell benefit and offer opt-in configuration. Detect existing equivalent fnm initialization, back up before writing, and append only a marked app-owned block that makes fnm discoverable. Leave ambiguous/conflicting, symlinked, or unexpectedly changed configurations untouched rather than attempting repair.
-- [ ] Add restoration that removes only the app-owned block, preserving unrelated contents. Recheck the file before changing it; do not overwrite later user edits with a wholesale backup restore.
-- [ ] Write brief findings from the VM walkthrough: environment/version pins, actual dialogs/permissions and Homebrew execution user, explicit runtime strategy, observed outcomes, limitations, and the production go/no-go recommendation. Label unrun checks as unrun; do not duplicate the evidence notes as a chronological log.
+- [x] Explain the separate shell benefit and offer opt-in configuration. Detect existing equivalent fnm initialization, back up before writing, and append only a marked app-owned block that makes fnm discoverable. Leave ambiguous/conflicting, symlinked, or unexpectedly changed configurations untouched rather than attempting repair.
+- [x] Add restoration that removes only the app-owned block, preserving unrelated contents. Recheck the file before changing it; do not overwrite later user edits with a wholesale backup restore.
+- [x] Write brief findings from the VM walkthrough: environment/version pins, actual dialogs/permissions and Homebrew execution user, explicit runtime strategy, observed outcomes, limitations, and the production go/no-go recommendation. Label unrun checks as unrun; do not duplicate the evidence notes as a chronological log.
 - [ ] Satisfy the verification and completion gate below and record concise evidence.
 
 Verification:

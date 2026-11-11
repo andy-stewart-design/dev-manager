@@ -66,13 +66,50 @@ struct ProvisioningView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
             }
 
+            GroupBox("Optional future interactive Zsh sessions") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("After the no-shell-edit fixture proof, you may add one marked block to ~/.zshrc. It makes fnm-managed Node and pnpm available in future interactive Zsh sessions; it is not required for this app or its fixture. ~/.zprofile is never edited.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Text(model.shellConfigurationStatus)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                    HStack {
+                        Button("Configure ~/.zshrc", systemImage: "pencil") {
+                            model.isShowingShellConfigurationConsent = true
+                        }
+                        .disabled(!model.canConfigureShell)
+                        Button("Check fresh Zsh", systemImage: "terminal") {
+                            Task { await model.verifyFreshShell() }
+                        }
+                        .disabled(!model.canVerifyShell)
+                        Button("Restore", systemImage: "arrow.uturn.backward") {
+                            model.isShowingShellRestoreConsent = true
+                        }
+                        .disabled(!model.canRestoreShell)
+                    }
+                    if !model.shellVerificationOutput.isEmpty {
+                        ScrollView {
+                            Text(model.shellVerificationOutput)
+                                .font(.system(.caption, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 70)
+                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             HStack {
                 Button {
                     Task { await model.checkAgain() }
                 } label: {
                     Label("Check again", systemImage: "arrow.clockwise")
                 }
-                .disabled(model.isChecking || model.isRequestingCommandLineTools || model.isDownloadingHomebrew || model.isInstallingRuntime)
+                .disabled(model.isChecking || model.isRequestingCommandLineTools || model.isDownloadingHomebrew || model.isInstallingRuntime || model.isConfiguringShell || model.isVerifyingShell || model.isRestoringShell)
 
                 Button {
                     model.isShowingCommandLineToolsConsent = true
@@ -111,7 +148,7 @@ struct ProvisioningView: View {
             }
         }
         .padding(20)
-        .frame(width: 650, height: 510)
+        .frame(width: 700, height: 690)
         .task {
             if model.checks.isEmpty {
                 await model.checkAgain()
@@ -140,6 +177,30 @@ struct ProvisioningView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Dev Manager will reuse usable tools, install only missing exact versions as the current user, and never edit shell files. Existing conflicting or unusable tools are left unchanged. The fixture is created under Application Support only after all checks pass.")
+        }
+        .confirmationDialog(
+            "Configure the optional ~/.zshrc block?",
+            isPresented: $model.isShowingShellConfigurationConsent,
+            titleVisibility: .visible
+        ) {
+            Button("Configure ~/.zshrc") {
+                do { try model.configureShell() } catch { }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("After your consent, Dev Manager will back up an existing regular ~/.zshrc, or record that it was absent, then append one marked block using the detected absolute fnm executable and its safely quoted parent directory on PATH. It will refuse symlinks, conflicting initialization, invalid or changed owned content, and never edit ~/.zprofile. This is optional and not needed by the fixture.")
+        }
+        .confirmationDialog(
+            "Restore the optional ~/.zshrc block?",
+            isPresented: $model.isShowingShellRestoreConsent,
+            titleVisibility: .visible
+        ) {
+            Button("Restore ~/.zshrc") {
+                do { try model.restoreShell() } catch { }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Dev Manager will remove only its unchanged marked block, preserve unrelated content including later edits, and remove ~/.zshrc only when the app created it and nothing else remains. It will refuse unexpected changes instead of restoring a wholesale backup.")
         }
         .confirmationDialog(
             "Download and open Homebrew.pkg?",
