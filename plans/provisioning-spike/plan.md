@@ -79,8 +79,8 @@ Expected files:
 Tasks:
 
 - [ ] Establish host build and clean VM baseline: app opens, administrator/OS/architecture are suitable, prerequisites are absent or explicitly recorded, and a clean snapshot exists. Record relevant pre-existing failures separately.
-- [ ] Add the setup screen and read-only tool checks. Choose one exact compatible Node/pnpm pair for later fixture use; detect selected developer tools, Homebrew, fnm, and that runtime without sourcing or editing user shell files.
-- [ ] Add explicit-consent Command Line Tools installation via `/usr/bin/xcode-select --install`. Treat return as request submission; provide manual Check again and functional developer-tool verification. Reuse usable full Xcode rather than forcing standalone tools.
+- [x] Add the setup screen and read-only tool checks. Choose one exact compatible Node/pnpm pair for later fixture use; detect selected developer tools, Homebrew, fnm, and that runtime without sourcing or editing user shell files.
+- [x] Add explicit-consent Command Line Tools installation via `/usr/bin/xcode-select --install`. Treat return as request submission; provide manual Check again and functional developer-tool verification. Reuse usable full Xcode rather than forcing standalone tools.
 - [ ] Satisfy the verification and completion gate below and record concise evidence.
 
 Verification:

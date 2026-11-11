@@ -1,0 +1,141 @@
+#if DEBUG
+import SwiftUI
+
+struct ProvisioningView: View {
+    @StateObject private var model = ProvisioningModel()
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("Development setup", systemImage: "wrench.and.screwdriver")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+
+            Text("Debug-only diagnostics. Checks are read-only and do not source or edit shell files.")
+                .foregroundStyle(.secondary)
+
+            if let issue = model.supportedEnvironmentIssue {
+                Label("Machine-changing setup is disabled: \(issue).", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+            }
+
+            List(model.checks) { check in
+                HStack(alignment: .top, spacing: 12) {
+                    statusIcon(for: check.state)
+                        .foregroundStyle(color(for: check.state))
+                        .frame(width: 18, height: 18)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(accessibilityLabel(for: check.state))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(check.id.title)
+                            .fontWeight(.medium)
+                        Text(detail(for: check.state))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.vertical, 3)
+            }
+            .listStyle(.inset)
+
+            if let message = model.message {
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            HStack {
+                Button {
+                    Task { await model.checkAgain() }
+                } label: {
+                    Label("Check again", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.isChecking || model.isRequestingCommandLineTools)
+
+                Button {
+                    model.isShowingCommandLineToolsConsent = true
+                } label: {
+                    Label("Request Command Line Tools…", systemImage: "arrow.down.circle")
+                }
+                .disabled(!model.canRequestCommandLineTools)
+
+                Spacer()
+            }
+        }
+        .padding(20)
+        .frame(width: 650, height: 510)
+        .task {
+            if model.checks.isEmpty {
+                await model.checkAgain()
+            }
+        }
+        .confirmationDialog(
+            "Request Apple's Command Line Tools?",
+            isPresented: $model.isShowingCommandLineToolsConsent,
+            titleVisibility: .visible
+        ) {
+            Button("Request installer dialog") {
+                model.requestCommandLineTools()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("macOS will show its own installer UI. Dev Manager does not collect a password and will not treat the request as installed. Complete or cancel Apple's dialog, then press Check again.")
+        }
+    }
+
+    private func detail(for state: ProvisioningCheck.State) -> String {
+        switch state {
+        case .checking: return "Checking…"
+        case let .unverified(detail), let .ready(detail), let .missing(detail), let .attention(detail): return detail
+        }
+    }
+
+    @ViewBuilder
+    private func statusIcon(for state: ProvisioningCheck.State) -> some View {
+        switch state {
+        case .unverified:
+            ZStack {
+                Circle()
+                    .stroke(style: StrokeStyle(lineWidth: 1.25, dash: [2, 2]))
+                    .frame(width: 15, height: 15)
+                Text("?")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+        case .checking:
+            Image(systemName: "ellipsis.circle")
+        case .ready:
+            Image(systemName: "checkmark.circle.fill")
+        case .missing:
+            Image(systemName: "circle.dashed")
+        case .attention:
+            Image(systemName: "exclamationmark.triangle.fill")
+        }
+    }
+
+    private func accessibilityLabel(for state: ProvisioningCheck.State) -> String {
+        switch state {
+        case .checking: return "Checking"
+        case .unverified: return "Not yet verified"
+        case .ready: return "Ready"
+        case .missing: return "Missing"
+        case .attention: return "Needs attention"
+        }
+    }
+
+    private func color(for state: ProvisioningCheck.State) -> Color {
+        switch state {
+        case .checking: return .secondary
+        case .unverified: return .secondary
+        case .ready: return .green
+        case .missing: return .secondary
+        case .attention: return .orange
+        }
+    }
+}
+#endif
