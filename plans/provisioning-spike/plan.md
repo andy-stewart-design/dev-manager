@@ -54,7 +54,7 @@ Unsigned builds establish compilation, not VM launchability. Prepare the tester-
 | Phase | Outcome | Dependencies | Exit gate |
 | --- | --- | --- | --- |
 | 1 | Development-only setup can detect prerequisites and hand off to Apple's graphical installers. | User-provided VM and approvals. | Clean VM completes developer-tool/Homebrew setup; cancellation and recheck behave correctly. |
-| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards. | Phase 1 exit gate. | Steps 2.1, 2.2, and the bounded 2.3 presentation follow-up are verified; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
+| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards; the final provisioning source tree is focused without behavior changes. | Phase 1 exit gate. | Steps 2.1, 2.2, bounded 2.3 presentation, and bounded 2.4 architecture follow-up are verified; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
 
 Delivery boundary: one feature-complete spike change for review; no publication or production rollout. Each step is a bounded review/revert unit. No separate atomic migration group is needed; each step remains buildable with its prerequisites.
 
@@ -209,7 +209,45 @@ Verification:
 Completion gate: source inspection and `git diff --check` only for this authoring pass; the Step 2.3 verification checkbox remains unchecked until the user reports the required Xcode/VM checks.
 Evidence location: [evidence/step-2.3.md](evidence/step-2.3.md).
 
-Phase exit gate: after Step 2.3 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC9 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final 2.3 verification (the prior Step 2.2 gate remains required), then seek the user's review rather than proceeding to rollout.
+### Step 2.4 — Focused provisioning source architecture
+
+Requirements / acceptance: R10, AC10; preserves R1–R9 and AC1–AC9.
+Depends on: the Step 2.3 implementation and the user's reported positive UI feedback. This dependency records the bounded follow-up context; it does not claim that any build, test, VM, Release, ordinary-project, or final integration gate passed.
+Review boundary: file-level architecture only. Move and extract provisioning implementation into focused source files without changing behavior, UI layout, button logic, normal runner/store/environment code, or tested shell safety boundaries.
+
+Expected files:
+
+- `dev-manager/Provisioning/ProvisioningModel.swift` — thin DEBUG-only state, guards, next-action derivation, and action coordination.
+- `dev-manager/Provisioning/ProvisioningCheck.swift` — shared check states and inspection result values.
+- `dev-manager/Provisioning/ProvisioningConfiguration.swift` — pinned versions, environment values, fixture constants, and official Homebrew metadata constants.
+- `dev-manager/Provisioning/ProvisioningInspector.swift` — read-only developer-tools, Homebrew, fnm, Node, and pnpm checks.
+- `dev-manager/Provisioning/HomebrewPackageInstaller.swift` — official GitHub release metadata, package validation/download, and installer handoff support.
+- `dev-manager/Provisioning/ProvisioningRuntimeInstaller.swift` — missing fnm, pinned Node, and pinned pnpm installation orchestration.
+- `dev-manager/Provisioning/ProvisioningFixture.swift` — fixture contents, staging, conflict checks, and atomic handoff.
+- `dev-manager/Provisioning/ProvisioningCommandRunner.swift` — bounded read-only commands and installer POSIX-spawn/process-group/output primitives.
+- `dev-manager/Provisioning/ProvisioningShellConfiguration.swift` — existing shell safety boundary moved without a parser/receipt/atomic-I/O rewrite.
+- `dev-manager/Provisioning/Views/ProvisioningView.swift` — existing main DEBUG layout, consent, next-action, and handoff coordination.
+- `dev-manager/Provisioning/Views/ProvisioningStatusView.swift` — status rows, icons, info controls, and aggregate runtime presentation.
+- `dev-manager/Provisioning/Views/ProvisioningAdvancedView.swift` — existing advanced/debug recovery surface.
+- `dev-manager/App/ContentView.swift` — unchanged DEBUG entry reference remains `ProvisioningView(onFixtureReady:)`.
+- `plans/provisioning-spike/evidence/step-2.4.md` — source-only implementation evidence and pending user-owned gates.
+
+Tasks:
+
+- [x] Move all provisioning source files out of `App` into the focused `Provisioning` tree with a `Views` subfolder; keep new files automatically included by the folder-synced project.
+- [x] Extract concrete inspection, Homebrew, runtime installation, fixture, command-runner, shared-value, check-type, and view responsibilities without introducing protocols, DI, global environment changes, a workflow framework, or a new testing harness.
+- [x] Keep the existing shell configuration implementation as a cohesive safety boundary and keep the existing `Runs/ProcessIdentity` bridge and normal project runner untouched.
+- [x] Record the actual file map, line counts, preserved contracts, source-only checks, and pending user Debug build/manual regression/Release/test/final-integration gates.
+
+Verification:
+
+- Source-only: inspect the focused file tree and diff for responsibility boundaries, DEBUG guards, unchanged public view handoff, preserved pins/guards/waiting state/generation invalidation, bounded command/process ownership, fixture conflict safety, shell safety boundary, and no unrelated changes. Run `git diff --check`.
+- User-owned pending gate: build the Debug artifact in Xcode and perform the predetermined manual UI/VM regression, then separately complete Release/setup-absence, existing tests, ordinary-project isolation, and the final Phase 2 integration gate. No such gate is claimed by this authoring pass.
+
+Completion gate: source inspection and `git diff --check` only for this implementation pass; Step 2.4 and the final integration gate remain unchecked until the user reports the required checks.
+Evidence location: [evidence/step-2.4.md](evidence/step-2.4.md).
+
+Phase exit gate: after the final Step 2.4 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC10 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final Step 2.4 verification (all prior Step 2.2 and Step 2.3 gates remain required), then seek the user's review rather than proceeding to rollout.
 
 ## Final acceptance
 
@@ -224,6 +262,7 @@ Phase exit gate: after Step 2.3 verification, run the existing regression suite 
 | AC7 | 1.1 guards; Phase 2 gate | Release compilation/source gating plus ordinary-project manual launch prove isolation. | `evidence/step-2.2.md` |
 | AC8 | 2.2; Phase 2 gate | Concise findings reflect observations and explicitly identify unrun cases. | `findings.md`, `evidence/step-2.2.md` |
 | AC9 | 2.3; final Phase 2 gate | One current-check-derived primary setup action, explicit external waiting, grouped runtime status, accessible close, and title-context-menu Advanced spike tools on a separate secondary surface; optional unconfigured shell state may offer Configure shell — optional, while configured/conflicting shell state remains Done; no shell prerequisite or guard bypass. | `evidence/step-2.3.md` and final acceptance review |
+| AC10 | 2.4; final Phase 2 gate | Focused `Provisioning/` source tree and `Views/` subfolder, thin coordinating model, concrete helpers, one coherent configuration namespace, preserved DEBUG/public handoff and safety boundaries, and no unrelated runner/store/environment changes. | `evidence/step-2.4.md` and final acceptance review |
 
 No live workflow, build, test, installation, or VM acceptance has been run merely by authoring this plan.
 

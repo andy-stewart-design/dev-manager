@@ -13,3 +13,5 @@ The Release build/setup-absence check, existing regression suite, and ordinary-p
 ## Recommendation
 
 The shell walkthrough is provisionally reported working, but do not treat the spike as fully accepted or production-ready until the remaining Release/setup-absence, regression-suite, and ordinary-project isolation checks are reported and the final Phase 2 gate is reviewed.
+
+The final source-only architecture pass preserves the behavior and UI contracts above while moving provisioning into `dev-manager/Provisioning/` with `Views/` for the DEBUG surface. No build, test, VM, Release, ordinary-project, or final integration result is inferred from that refactor.
