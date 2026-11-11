@@ -262,7 +262,7 @@ final class ProvisioningModel: ObservableObject {
             let output = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\nstderr:\n")
             shellVerificationOutput = String(output.suffix(8_000))
             guard result.succeeded else {
-                throw ProvisioningShellConfiguration.ConfigurationError.conflict("fresh interactive Zsh verification failed: \(result.failureDescription(for: "/bin/zsh -i -c"))")
+                throw ProvisioningShellConfiguration.ConfigurationError.conflict("fresh interactive Zsh verification failed: \(result.failureDescription(for: "/bin/zsh -i -c", timeout: ProvisioningConfiguration.commandTimeout))")
             }
             let values = result.stdout.split(whereSeparator: \.isNewline).reduce(into: [String: String]()) { values, line in
                 let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
@@ -426,7 +426,7 @@ final class ProvisioningModel: ObservableObject {
         }
     }
 
-    private func recordInstallationResult(_ result: ProvisioningInstallProcessResult, label: String) {
+    private func recordInstallationResult(_ result: ProvisioningProcessResult, label: String) {
         var text = "\(label) exited with status \(result.terminationStatus)."
         if result.timedOut { text = "\(label) timed out after \(Int(ProvisioningConfiguration.installTimeout / 60)) minutes." }
         if !result.stdout.isEmpty { text += "\nstdout:\n\(result.stdout)" }

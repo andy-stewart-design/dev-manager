@@ -23,19 +23,19 @@ nonisolated enum ProvisioningInspector {
         let selector = await ProvisioningCommandRunner.run(URL(fileURLWithPath: "/usr/bin/xcode-select"), arguments: ["-p"])
         guard selector.succeeded, let selectedPath = selector.stdout.firstNonEmptyLine else {
             if selector.timedOut {
-                return (ProvisioningCheck(id: .developerTools, state: .attention(selector.failureDescription(for: "xcode-select"))), nil)
+                return (ProvisioningCheck(id: .developerTools, state: .attention(selector.failureDescription(for: "xcode-select", timeout: ProvisioningConfiguration.commandTimeout))), nil)
             }
             return (ProvisioningCheck(id: .developerTools, state: .missing("No usable developer tools are selected. Request Apple's graphical installer, then Check again.")), nil)
         }
 
         let clang = await ProvisioningCommandRunner.run(URL(fileURLWithPath: "/usr/bin/xcrun"), arguments: ["--find", "clang"])
         guard clang.succeeded, let clangPath = clang.stdout.firstNonEmptyLine else {
-            return (ProvisioningCheck(id: .developerTools, state: .attention("Selected tools at \(selectedPath) are not usable: \(clang.failureDescription(for: "xcrun --find clang"))")), nil)
+            return (ProvisioningCheck(id: .developerTools, state: .attention("Selected tools at \(selectedPath) are not usable: \(clang.failureDescription(for: "xcrun --find clang", timeout: ProvisioningConfiguration.commandTimeout))")), nil)
         }
 
         let sdk = await ProvisioningCommandRunner.run(URL(fileURLWithPath: "/usr/bin/xcrun"), arguments: ["--sdk", "macosx", "--show-sdk-path"])
         guard sdk.succeeded else {
-            return (ProvisioningCheck(id: .developerTools, state: .attention("clang is at \(clangPath), but the macOS SDK check failed: \(sdk.failureDescription(for: "xcrun --show-sdk-path"))")), nil)
+            return (ProvisioningCheck(id: .developerTools, state: .attention("clang is at \(clangPath), but the macOS SDK check failed: \(sdk.failureDescription(for: "xcrun --show-sdk-path", timeout: ProvisioningConfiguration.commandTimeout))")), nil)
         }
 
         return (ProvisioningCheck(id: .developerTools, state: .ready("Selected: \(selectedPath); clang: \(clangPath)")), URL(fileURLWithPath: clangPath))
@@ -49,7 +49,7 @@ nonisolated enum ProvisioningInspector {
 
         let result = await ProvisioningCommandRunner.run(brew, arguments: ["--version"])
         guard result.succeeded else {
-            return (ProvisioningCheck(id: .homebrew, state: .attention("Found \(brew.path), but it did not run as the current user: \(result.failureDescription(for: "brew --version"))")), brew)
+            return (ProvisioningCheck(id: .homebrew, state: .attention("Found \(brew.path), but it did not run as the current user: \(result.failureDescription(for: "brew --version", timeout: ProvisioningConfiguration.commandTimeout))")), brew)
         }
         return (ProvisioningCheck(id: .homebrew, state: .ready("\(result.stdout.firstNonEmptyLine ?? brew.path); \(brew.path) ran as the current user")), brew)
     }
@@ -69,7 +69,7 @@ nonisolated enum ProvisioningInspector {
 
         let result = await ProvisioningCommandRunner.run(fnm, arguments: ["--version"])
         guard result.succeeded else {
-            return (ProvisioningCheck(id: .fnm, state: .attention("Found \(fnm.path), but it did not run as the current user: \(result.failureDescription(for: "fnm --version"))")), fnm)
+            return (ProvisioningCheck(id: .fnm, state: .attention("Found \(fnm.path), but it did not run as the current user: \(result.failureDescription(for: "fnm --version", timeout: ProvisioningConfiguration.commandTimeout))")), fnm)
         }
         return (ProvisioningCheck(id: .fnm, state: .ready("\(result.stdout.firstNonEmptyLine ?? "fnm") at \(fnm.path)")), fnm)
     }
@@ -84,7 +84,7 @@ nonisolated enum ProvisioningInspector {
 
         let inspection = await ProvisioningCommandRunner.run(fnmURL, arguments: ["list"], environment: ProvisioningConfiguration.readOnlyRuntimeEnvironment)
         guard inspection.succeeded else {
-            let failure = inspection.failureDescription(for: "fnm list")
+            let failure = inspection.failureDescription(for: "fnm list", timeout: ProvisioningConfiguration.commandTimeout)
             return (
                 ProvisioningCheck(id: .node, state: .attention("Could not inspect the installed Node \(ProvisioningConfiguration.nodeVersion): \(failure)")),
                 ProvisioningCheck(id: .pnpm, state: .unverified("Not yet verified in the required Node \(ProvisioningConfiguration.nodeVersion) context; fnm inventory failed: \(failure)"))
@@ -99,7 +99,7 @@ nonisolated enum ProvisioningInspector {
 
         let node = await ProvisioningCommandRunner.run(fnmURL, arguments: ["exec", "--using", ProvisioningConfiguration.nodeVersion, "node", "--version"], environment: ProvisioningConfiguration.readOnlyRuntimeEnvironment)
         guard node.succeeded else {
-            let failure = node.failureDescription(for: "fnm exec node")
+            let failure = node.failureDescription(for: "fnm exec node", timeout: ProvisioningConfiguration.commandTimeout)
             return (
                 ProvisioningCheck(id: .node, state: .attention("The installed Node \(ProvisioningConfiguration.nodeVersion) could not run through fnm: \(failure)")),
                 ProvisioningCheck(id: .pnpm, state: .unverified("Not yet verified in the required Node \(ProvisioningConfiguration.nodeVersion) context; the pinned Node runtime could not run."))
@@ -118,7 +118,7 @@ nonisolated enum ProvisioningInspector {
             if pnpmPath.timedOut {
                 return (
                     ProvisioningCheck(id: .node, state: .ready("Node \(ProvisioningConfiguration.nodeVersion) through fnm")),
-                    ProvisioningCheck(id: .pnpm, state: .attention("Could not inspect pnpm in the required Node \(ProvisioningConfiguration.nodeVersion) context: \(pnpmPath.failureDescription(for: "which pnpm"))"))
+                    ProvisioningCheck(id: .pnpm, state: .attention("Could not inspect pnpm in the required Node \(ProvisioningConfiguration.nodeVersion) context: \(pnpmPath.failureDescription(for: "which pnpm", timeout: ProvisioningConfiguration.commandTimeout))"))
                 )
             }
             return (
@@ -137,7 +137,7 @@ nonisolated enum ProvisioningInspector {
         guard pnpm.succeeded else {
             return (
                 ProvisioningCheck(id: .node, state: .ready("Node \(ProvisioningConfiguration.nodeVersion) through fnm")),
-                ProvisioningCheck(id: .pnpm, state: .attention("Found pnpm at \(resolvedPnpm) in the Node \(ProvisioningConfiguration.nodeVersion) context, but it could not report its version: \(pnpm.failureDescription(for: "fnm exec pnpm"))"))
+                ProvisioningCheck(id: .pnpm, state: .attention("Found pnpm at \(resolvedPnpm) in the Node \(ProvisioningConfiguration.nodeVersion) context, but it could not report its version: \(pnpm.failureDescription(for: "fnm exec pnpm", timeout: ProvisioningConfiguration.commandTimeout))"))
             )
         }
         guard pnpm.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == ProvisioningConfiguration.pnpmVersion else {

@@ -7,6 +7,11 @@ nonisolated enum ProvisioningConfiguration {
 
     nonisolated static let commandTimeout: TimeInterval = 8
     nonisolated static let installTimeout: TimeInterval = 15 * 60
+    // Cleanup is deliberately finite and shared by read-only checks and installers.
+    // The value applies separately to the TERM and KILL phases; output-drain
+    // cancellation has its own final grace after those two phases.
+    nonisolated static let processCleanupGrace: TimeInterval = 2
+    nonisolated static let processDrainCancellationGrace: TimeInterval = 0.25
     nonisolated static let homebrewReleaseAPIURL = "https://api.github.com/repos/Homebrew/brew/releases/latest"
     nonisolated static let homebrewPackageName = "Homebrew.pkg"
     nonisolated static let officialHomebrewReleasePrefix = "https://github.com/Homebrew/brew/releases/download/"

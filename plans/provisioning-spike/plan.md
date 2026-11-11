@@ -54,7 +54,7 @@ Unsigned builds establish compilation, not VM launchability. Prepare the tester-
 | Phase | Outcome | Dependencies | Exit gate |
 | --- | --- | --- | --- |
 | 1 | Development-only setup can detect prerequisites and hand off to Apple's graphical installers. | User-provided VM and approvals. | Clean VM completes developer-tool/Homebrew setup; cancellation and recheck behave correctly. |
-| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards; the final provisioning source tree is focused without behavior changes. | Phase 1 exit gate. | Steps 2.1, 2.2, bounded 2.3 presentation, and bounded 2.4 architecture follow-up are verified; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
+| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards; the final provisioning source tree and shared command collection are focused without behavior changes. | Phase 1 exit gate. | Steps 2.1, 2.2, bounded 2.3 presentation, bounded 2.4 architecture, and bounded 2.5 runner follow-up are verified; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
 
 Delivery boundary: one feature-complete spike change for review; no publication or production rollout. Each step is a bounded review/revert unit. No separate atomic migration group is needed; each step remains buildable with its prerequisites.
 
@@ -247,7 +247,38 @@ Verification:
 Completion gate: source inspection and `git diff --check` only for this implementation pass; Step 2.4 and the final integration gate remain unchecked until the user reports the required checks.
 Evidence location: [evidence/step-2.4.md](evidence/step-2.4.md).
 
-Phase exit gate: after the final Step 2.4 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC10 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final Step 2.4 verification (all prior Step 2.2 and Step 2.3 gates remain required), then seek the user's review rather than proceeding to rollout.
+### Step 2.5 — Bounded shared provisioning command runner
+
+Requirements / acceptance: R11, AC11; preserves R1–R10 and AC1–AC10.
+Depends on: Step 2.4 source architecture. This is a bounded runner/consumer/test follow-up; it does not claim any prior user-owned gate passed.
+Review boundary: shared DEBUG command collection only. Keep read-only checks read-only, preserve the eight-second check and fifteen-minute install policies, and leave the existing Runs process engine untouched.
+
+Expected files:
+
+- `dev-manager/Provisioning/ProvisioningCommandRunner.swift` — one shared result and POSIX-spawn/process-group engine with concurrent bounded drains, deadline-aware collection, partial timeout diagnostics, finite cleanup, and reap.
+- `dev-manager/Provisioning/ProvisioningConfiguration.swift` — explicit bounded cleanup grace constants.
+- `dev-manager/Provisioning/ProvisioningInspector.swift` — explicit check timeout formatting at each read-only caller.
+- `dev-manager/Provisioning/ProvisioningRuntimeInstaller.swift` and `dev-manager/Provisioning/ProvisioningModel.swift` — shared `ProvisioningProcessResult` consumers.
+- `dev-managerTests/Provisioning/ProvisioningCommandRunnerTests.swift` — three focused deterministic Swift Testing cases using temporary scripts and an isolated process group.
+- `plans/provisioning-spike/spec.md`, `plans/provisioning-spike/evidence/changes.md`, and `plans/provisioning-spike/evidence/step-2.5.md` — stable R11/AC11 contract, approval/evidence, and pending user verification.
+
+Tasks:
+
+- [x] Replace the split check/install result and completion-claim path with one shared bounded POSIX-spawn engine; drain both streams concurrently and retain bounded tails while the child runs.
+- [x] Keep the command deadline effective through output collection; on timeout or incomplete collection, clean the owned process group, reap within finite grace, and return partial output without success.
+- [x] Preserve distinct eight-second read-only check and fifteen-minute install policies; make timeout formatting caller-explicit and keep the existing Runs bridge untouched.
+- [x] Add three focused Swift Testing cases for concurrent large output, leader-only timeout/reap, and a same-group descendant holding pipes; do not run them in this authoring pass.
+- [x] Record source-only implementation evidence and leave Debug build, test execution, VM smoke, and final integration gates unchecked.
+
+Verification:
+
+- Source-only authoring: inspect the shared engine, consumer call sites, DEBUG guards, process-group ownership, bounded cleanup, and test names; `git diff --check` is permitted. No build, test, parse, launch, install, download, or host-shell workflow is performed here.
+- User-owned Xcode verification: run `drainsLargeOutputWithoutPipeBackpressure`, `leaderOnlyTimeoutReapsLeader`, and `descendantHoldingPipesCannotExtendCommandDeadline`, then perform the existing Debug/manual/VM, Release, regression, ordinary-project, and final integration gates. The user owns any diagnosis of compiler/runtime behavior.
+
+Completion gate: implementation tasks may be recorded here, but Step 2.5, AC11, and the final integration gate remain unchecked until the user reports the named tests and required manual gates.
+Evidence location: [evidence/step-2.5.md](evidence/step-2.5.md).
+
+Phase exit gate: after the final Step 2.5 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC11 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final Step 2.5 verification (all prior Step 2.2, Step 2.3, and Step 2.4 gates remain required), then seek the user's review rather than proceeding to rollout.
 
 ## Final acceptance
 
@@ -263,6 +294,7 @@ Phase exit gate: after the final Step 2.4 verification, run the existing regress
 | AC8 | 2.2; Phase 2 gate | Concise findings reflect observations and explicitly identify unrun cases. | `findings.md`, `evidence/step-2.2.md` |
 | AC9 | 2.3; final Phase 2 gate | One current-check-derived primary setup action, explicit external waiting, grouped runtime status, accessible close, and title-context-menu Advanced spike tools on a separate secondary surface; optional unconfigured shell state may offer Configure shell — optional, while configured/conflicting shell state remains Done; no shell prerequisite or guard bypass. | `evidence/step-2.3.md` and final acceptance review |
 | AC10 | 2.4; final Phase 2 gate | Focused `Provisioning/` source tree and `Views/` subfolder, thin coordinating model, concrete helpers, one coherent configuration namespace, preserved DEBUG/public handoff and safety boundaries, and no unrelated runner/store/environment changes. | `evidence/step-2.4.md` and final acceptance review |
+| AC11 | 2.5; final Phase 2 gate | Shared `ProvisioningProcessResult` and bounded POSIX-spawn collection for checks/installers; concurrent large-output drain, deadline-enforced same-group descendant cleanup, leader reap, partial timeout diagnostics, explicit check/install policies, and focused regression cases. Detached process trees remain outside this scoped guarantee. | `evidence/step-2.5.md` and final acceptance review |
 
 No live workflow, build, test, installation, or VM acceptance has been run merely by authoring this plan.
 

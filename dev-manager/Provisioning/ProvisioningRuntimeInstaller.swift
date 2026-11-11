@@ -2,7 +2,7 @@
 import Foundation
 
 nonisolated enum ProvisioningRuntimeInstaller {
-    nonisolated static func installFNM() async -> ProvisioningInstallProcessResult {
+    nonisolated static func installFNM() async -> ProvisioningProcessResult {
         await ProvisioningCommandRunner.runInstallProcess(
             executableURL: ProvisioningConfiguration.homebrewURL,
             arguments: ["install", "fnm"],
@@ -11,7 +11,7 @@ nonisolated enum ProvisioningRuntimeInstaller {
         )
     }
 
-    nonisolated static func installNode(using fnmURL: URL) async -> ProvisioningInstallProcessResult {
+    nonisolated static func installNode(using fnmURL: URL) async -> ProvisioningProcessResult {
         await ProvisioningCommandRunner.runInstallProcess(
             executableURL: fnmURL,
             arguments: ["install", ProvisioningConfiguration.nodeVersion],
@@ -20,7 +20,7 @@ nonisolated enum ProvisioningRuntimeInstaller {
         )
     }
 
-    nonisolated static func installPnpm(using fnmURL: URL) async -> ProvisioningInstallProcessResult {
+    nonisolated static func installPnpm(using fnmURL: URL) async -> ProvisioningProcessResult {
         await ProvisioningCommandRunner.runInstallProcess(
             executableURL: fnmURL,
             arguments: [

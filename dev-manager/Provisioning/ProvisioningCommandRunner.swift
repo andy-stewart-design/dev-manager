@@ -2,7 +2,7 @@
 import Darwin
 import Foundation
 
-nonisolated struct ProvisioningCommandResult: Sendable {
+nonisolated struct ProvisioningProcessResult: Sendable {
     let succeeded: Bool
     let stdout: String
     let stderr: String
@@ -10,133 +10,104 @@ nonisolated struct ProvisioningCommandResult: Sendable {
     let timedOut: Bool
 }
 
-nonisolated struct ProvisioningInstallProcessResult: Sendable {
-    let succeeded: Bool
-    let stdout: String
-    let stderr: String
-    let terminationStatus: Int32
-    let timedOut: Bool
-}
-
-extension ProvisioningCommandResult {
-    nonisolated func failureDescription(for command: String) -> String {
+extension ProvisioningProcessResult {
+    nonisolated func failureDescription(for command: String, timeout: TimeInterval) -> String {
         if timedOut {
-            return "\(command) timed out after \(Int(ProvisioningConfiguration.commandTimeout)) seconds"
+            return "\(command) timed out after \(Int(timeout)) seconds"
         }
         let detail = stderr.firstNonEmptyLine ?? stdout.firstNonEmptyLine ?? "exit status \(terminationStatus)"
         return "\(command) failed: \(detail)"
     }
 }
 
-nonisolated private enum ProvisioningInstallProcessError: LocalizedError, Sendable {
+nonisolated private enum ProvisioningProcessError: LocalizedError, Sendable {
     case pipeFailed(String)
     case spawnFailed(String)
 
     nonisolated var errorDescription: String? {
         switch self {
-        case let .pipeFailed(detail): return "Could not create installer output pipes: \(detail)"
-        case let .spawnFailed(detail): return "Could not launch the installer: \(detail)"
+        case let .pipeFailed(detail): return "Could not create provisioning output pipes: \(detail)"
+        case let .spawnFailed(detail): return "Could not launch the provisioning command: \(detail)"
         }
     }
 }
 
-nonisolated private final class ProvisioningInstallOutputCollector: @unchecked Sendable {
-    private nonisolated let lock = NSLock()
+nonisolated private final class ProvisioningOutputCollector: @unchecked Sendable {
+    private static let maximumBytes = 12_000
+    private let lock = NSLock()
     private var stdoutStorage = ""
     private var stderrStorage = ""
 
-    nonisolated var stdout: String {
+    var stdout: String {
         lock.lock()
         defer { lock.unlock() }
         return stdoutStorage
     }
 
-    nonisolated var stderr: String {
+    var stderr: String {
         lock.lock()
         defer { lock.unlock() }
         return stderrStorage
     }
 
-    nonisolated func append(_ text: String, stream: String) {
+    func append(_ data: Data, stream: OutputStream) {
+        let text = String(decoding: data, as: UTF8.self)
         lock.lock()
         defer { lock.unlock() }
-        if stream == "stdout" {
-            stdoutStorage.append(text)
-        } else {
-            stderrStorage.append(text)
+        switch stream {
+        case .stdout:
+            stdoutStorage = boundedTail(stdoutStorage + text)
+        case .stderr:
+            stderrStorage = boundedTail(stderrStorage + text)
         }
-        if stdoutStorage.count > 12_000 { stdoutStorage = String(stdoutStorage.suffix(12_000)) }
-        if stderrStorage.count > 12_000 { stderrStorage = String(stderrStorage.suffix(12_000)) }
+    }
+
+    private func boundedTail(_ text: String) -> String {
+        guard text.utf8.count > Self.maximumBytes else { return text }
+        return String(decoding: Array(text.utf8.suffix(Self.maximumBytes)), as: UTF8.self)
+    }
+
+    enum OutputStream {
+        case stdout
+        case stderr
     }
 }
 
-nonisolated private final class ProvisioningCommandCompletion: @unchecked Sendable {
-    private nonisolated let lock = NSLock()
-    private var isFinished = false
+nonisolated private final class ProvisioningDrainCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
 
-    nonisolated func claim() -> Bool {
+    var isCancelled: Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard !isFinished else { return false }
-        isFinished = true
-        return true
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
     }
 }
 
 nonisolated enum ProvisioningCommandRunner {
+    /// The timeout is an internal injection point for deterministic DEBUG tests. Production
+    /// checks use the eight-second policy; installers use their separate fifteen-minute policy.
     nonisolated static func run(
         _ executableURL: URL,
         arguments: [String],
-        environment: [String: String] = [:]
-    ) async -> ProvisioningCommandResult {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            let output = Pipe()
-            let error = Pipe()
-            let completion = ProvisioningCommandCompletion()
-
-            process.executableURL = executableURL
-            process.arguments = arguments
-            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = output
-            process.standardError = error
-            process.terminationHandler = { process in
-                guard completion.claim() else { return }
-                let stdout = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                let stderr = String(data: error.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                continuation.resume(returning: ProvisioningCommandResult(
-                    succeeded: process.terminationReason == .exit && process.terminationStatus == 0,
-                    stdout: stdout,
-                    stderr: stderr,
-                    terminationStatus: process.terminationStatus,
-                    timedOut: false
-                ))
-            }
-
-            let timeoutWork = DispatchWorkItem {
-                guard completion.claim() else { return }
-                if process.isRunning { process.terminate() }
-                continuation.resume(returning: ProvisioningCommandResult(
-                    succeeded: false,
-                    stdout: "",
-                    stderr: "",
-                    terminationStatus: -1,
-                    timedOut: true
-                ))
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + ProvisioningConfiguration.commandTimeout, execute: timeoutWork)
-
-            do {
-                try process.run()
-            } catch {
-                guard completion.claim() else { return }
-                continuation.resume(returning: ProvisioningCommandResult(
-                    succeeded: false,
-                    stdout: "",
-                    stderr: error.localizedDescription,
-                    terminationStatus: -1,
-                    timedOut: false
+        environment: [String: String] = [:],
+        timeout: TimeInterval = ProvisioningConfiguration.commandTimeout
+    ) async -> ProvisioningProcessResult {
+        let mergedEnvironment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: runSynchronously(
+                    executableURL: executableURL,
+                    arguments: arguments,
+                    environment: mergedEnvironment,
+                    label: nil,
+                    timeout: timeout
                 ))
             }
         }
@@ -147,82 +118,114 @@ nonisolated enum ProvisioningCommandRunner {
         arguments: [String],
         environment: [String: String],
         label: String
-    ) async -> ProvisioningInstallProcessResult {
-        let timeout = ProvisioningConfiguration.installTimeout
+    ) async -> ProvisioningProcessResult {
         let mergedEnvironment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
-                continuation.resume(returning: runInstallProcessSynchronously(
+                continuation.resume(returning: runSynchronously(
                     executableURL: executableURL,
                     arguments: arguments,
                     environment: mergedEnvironment,
                     label: label,
-                    timeout: timeout
+                    timeout: ProvisioningConfiguration.installTimeout
                 ))
             }
         }
     }
 
-    private nonisolated static func runInstallProcessSynchronously(
+    private nonisolated static func runSynchronously(
         executableURL: URL,
         arguments: [String],
         environment: [String: String],
-        label: String,
+        label: String?,
         timeout: TimeInterval
-    ) -> ProvisioningInstallProcessResult {
-        let collector = ProvisioningInstallOutputCollector()
-        let spawned: InstallSpawn
+    ) -> ProvisioningProcessResult {
+        let spawned: ProvisioningSpawn
         do {
-            spawned = try spawnInstallProcess(
+            spawned = try spawnProcess(
                 executableURL: executableURL,
                 arguments: arguments,
                 environment: environment
             )
         } catch {
-            return ProvisioningInstallProcessResult(
+            return ProvisioningProcessResult(
                 succeeded: false,
                 stdout: "",
-                stderr: "\(label): \(error.localizedDescription)",
+                stderr: label.map { "\($0): \(error.localizedDescription)" } ?? error.localizedDescription,
                 terminationStatus: -1,
                 timedOut: false
             )
         }
 
-        let group = DispatchGroup()
-        group.enter()
+        let collector = ProvisioningOutputCollector()
+        let cancellation = ProvisioningDrainCancellation()
+        let drains = DispatchGroup()
+        drains.enter()
         DispatchQueue.global(qos: .utility).async {
-            drain(spawned.stdout, into: collector, stream: "stdout")
-            group.leave()
+            drain(spawned.stdout, into: collector, stream: .stdout, cancellation: cancellation)
+            drains.leave()
         }
-        group.enter()
+        drains.enter()
         DispatchQueue.global(qos: .utility).async {
-            drain(spawned.stderr, into: collector, stream: "stderr")
-            group.leave()
+            drain(spawned.stderr, into: collector, stream: .stderr, cancellation: cancellation)
+            drains.leave()
         }
 
-        var timedOut = !waitForInstallExit(spawned.processID, timeout: timeout)
+        let deadline = Date().addingTimeInterval(max(0, timeout))
+        var leaderExited = false
+        var outputCollected = false
+        while Date() < deadline {
+            if !leaderExited { leaderExited = hasObservedExit(spawned.processID) }
+            outputCollected = drains.wait(timeout: .now()) == .success
+            if leaderExited && outputCollected { break }
+            usleep(20_000)
+        }
+        if !leaderExited { leaderExited = hasObservedExit(spawned.processID) }
+        outputCollected = drains.wait(timeout: .now()) == .success
+
+        var timedOut = !leaderExited || !outputCollected
         if timedOut {
-            collector.append("\nTimed out; terminating the installer process group.\n", stream: "stderr")
+            collector.append(Data("\nTimed out; terminating the provisioning process group.\n".utf8), stream: .stderr)
         }
-        let groupWasClean = stopInstallGroup(
-            spawned.processID,
-            timeout: timedOut ? 5.0 : 2.0
+
+        // Cleanup is always finite. On the timeout path it also closes descendants' inherited
+        // pipe writers, allowing the drain workers to finish and preserving whatever tail exists.
+        // The process-group cleanup is intentionally scoped to this spawned group; a detached
+        // setsid descendant is not tracked or chased. Drain cancellation still bounds capture
+        // even if such a process retains an inherited pipe writer.
+        let groupWasClean = cleanupProcessGroup(
+            processID: spawned.processID,
+            grace: ProvisioningConfiguration.processCleanupGrace
         )
-        let status = reapInstallProcess(spawned.processID, timeout: 2.0)
-        if status == nil { timedOut = true }
+        if !groupWasClean { timedOut = true }
 
-        if group.wait(timeout: .now() + 2.0) == .timedOut {
-            spawned.stdout.closeFile()
-            spawned.stderr.closeFile()
-            _ = group.wait(timeout: .now() + 1.0)
-        } else {
-            spawned.stdout.closeFile()
-            spawned.stderr.closeFile()
+        if !outputCollected {
+            if drains.wait(timeout: .now() + ProvisioningConfiguration.processCleanupGrace) == .success {
+                outputCollected = true
+            } else {
+                cancellation.cancel()
+                _ = drains.wait(timeout: .now() + ProvisioningConfiguration.processDrainCancellationGrace)
+            }
+        }
+        if !outputCollected { timedOut = true }
+
+        guard let status = reapProcess(
+            spawned.processID,
+            timeout: ProvisioningConfiguration.processCleanupGrace
+        ) else {
+            timedOut = true
+            return ProvisioningProcessResult(
+                succeeded: false,
+                stdout: collector.stdout,
+                stderr: collector.stderr,
+                terminationStatus: -1,
+                timedOut: true
+            )
         }
 
-        let terminationStatus = status.map(installExitCode) ?? -1
-        return ProvisioningInstallProcessResult(
-            succeeded: !timedOut && groupWasClean && terminationStatus == 0,
+        let terminationStatus = exitCode(status)
+        return ProvisioningProcessResult(
+            succeeded: !timedOut && outputCollected && groupWasClean && terminationStatus == 0,
             stdout: collector.stdout,
             stderr: collector.stderr,
             terminationStatus: terminationStatus,
@@ -230,21 +233,21 @@ nonisolated enum ProvisioningCommandRunner {
         )
     }
 
-    nonisolated private struct InstallSpawn: Sendable {
+    private nonisolated struct ProvisioningSpawn: Sendable {
         let processID: Int32
-        let stdout: FileHandle
-        let stderr: FileHandle
+        let stdout: Int32
+        let stderr: Int32
     }
 
-    private nonisolated static func spawnInstallProcess(
+    private nonisolated static func spawnProcess(
         executableURL: URL,
         arguments: [String],
         environment: [String: String]
-    ) throws -> InstallSpawn {
-        let stdoutPipe = try makeInstallPipe()
+    ) throws -> ProvisioningSpawn {
+        let stdoutPipe = try makePipe()
         let stderrPipe: (read: Int32, write: Int32)
         do {
-            stderrPipe = try makeInstallPipe()
+            stderrPipe = try makePipe()
         } catch {
             close(stdoutPipe.read)
             close(stdoutPipe.write)
@@ -255,12 +258,15 @@ nonisolated enum ProvisioningCommandRunner {
         guard stdinFD >= 0 else {
             close(stdoutPipe.read); close(stdoutPipe.write)
             close(stderrPipe.read); close(stderrPipe.write)
-            throw ProvisioningInstallProcessError.spawnFailed("/dev/null: \(String(cString: strerror(errno)))")
+            throw ProvisioningProcessError.spawnFailed("/dev/null: \(String(cString: strerror(errno)))")
         }
         let normalizedStdin: Int32
         do {
-            normalizedStdin = try normalizeInstallDescriptor(stdinFD)
+            normalizedStdin = try normalizeDescriptor(stdinFD)
         } catch {
+            // normalizeDescriptor leaves the original open when duplication fails.
+            // Close it here; successful normalization has already closed the original.
+            close(stdinFD)
             close(stdoutPipe.read); close(stdoutPipe.write)
             close(stderrPipe.read); close(stderrPipe.write)
             throw error
@@ -272,14 +278,14 @@ nonisolated enum ProvisioningCommandRunner {
             close(normalizedStdin)
             close(stdoutPipe.read); close(stdoutPipe.write)
             close(stderrPipe.read); close(stderrPipe.write)
-            throw ProvisioningInstallProcessError.spawnFailed("could not initialize file actions")
+            throw ProvisioningProcessError.spawnFailed("could not initialize file actions")
         }
         guard posix_spawnattr_init(&attributes) == 0 else {
             posix_spawn_file_actions_destroy(&actions)
             close(normalizedStdin)
             close(stdoutPipe.read); close(stdoutPipe.write)
             close(stderrPipe.read); close(stderrPipe.write)
-            throw ProvisioningInstallProcessError.spawnFailed("could not initialize process-group attributes")
+            throw ProvisioningProcessError.spawnFailed("could not initialize process-group attributes")
         }
         defer {
             posix_spawn_file_actions_destroy(&actions)
@@ -304,7 +310,7 @@ nonisolated enum ProvisioningCommandRunner {
               posix_spawn_file_actions_addclose(&actions, stderrPipe.read) == 0,
               posix_spawn_file_actions_addclose(&actions, stderrPipe.write) == 0 else {
             closeParentDescriptors()
-            throw ProvisioningInstallProcessError.spawnFailed("could not configure the installer process group or output streams")
+            throw ProvisioningProcessError.spawnFailed("could not configure the provisioning process group or output streams")
         }
 
         let commandArguments = [executableURL.path] + arguments
@@ -334,24 +340,26 @@ nonisolated enum ProvisioningCommandRunner {
         guard result == 0 else {
             close(stdoutPipe.read)
             close(stderrPipe.read)
-            throw ProvisioningInstallProcessError.spawnFailed(String(cString: strerror(result)))
+            throw ProvisioningProcessError.spawnFailed(String(cString: strerror(result)))
         }
 
-        return InstallSpawn(
-            processID: processID,
-            stdout: FileHandle(fileDescriptor: stdoutPipe.read, closeOnDealloc: true),
-            stderr: FileHandle(fileDescriptor: stderrPipe.read, closeOnDealloc: true)
-        )
+        guard setNonBlocking(stdoutPipe.read), setNonBlocking(stderrPipe.read) else {
+            _ = kill(-processID, SIGKILL)
+            _ = reapProcess(processID, timeout: ProvisioningConfiguration.processCleanupGrace)
+            close(stdoutPipe.read); close(stderrPipe.read)
+            throw ProvisioningProcessError.spawnFailed("could not configure nonblocking output streams")
+        }
+        return ProvisioningSpawn(processID: processID, stdout: stdoutPipe.read, stderr: stderrPipe.read)
     }
 
-    private nonisolated static func makeInstallPipe() throws -> (read: Int32, write: Int32) {
+    private nonisolated static func makePipe() throws -> (read: Int32, write: Int32) {
         var fds = [Int32](repeating: -1, count: 2)
         guard pipe(&fds) == 0 else {
-            throw ProvisioningInstallProcessError.pipeFailed(String(cString: strerror(errno)))
+            throw ProvisioningProcessError.pipeFailed(String(cString: strerror(errno)))
         }
         do {
-            fds[0] = try normalizeInstallDescriptor(fds[0])
-            fds[1] = try normalizeInstallDescriptor(fds[1])
+            fds[0] = try normalizeDescriptor(fds[0])
+            fds[1] = try normalizeDescriptor(fds[1])
             return (fds[0], fds[1])
         } catch {
             if fds[0] >= 0 { close(fds[0]) }
@@ -360,43 +368,66 @@ nonisolated enum ProvisioningCommandRunner {
         }
     }
 
-    private nonisolated static func normalizeInstallDescriptor(_ descriptor: Int32) throws -> Int32 {
+    private nonisolated static func normalizeDescriptor(_ descriptor: Int32) throws -> Int32 {
         guard descriptor < 3 else { return descriptor }
         let replacement = fcntl(descriptor, F_DUPFD_CLOEXEC, 3)
         guard replacement >= 0 else {
-            throw ProvisioningInstallProcessError.pipeFailed("could not protect file descriptor: \(String(cString: strerror(errno)))")
+            throw ProvisioningProcessError.pipeFailed("could not protect file descriptor: \(String(cString: strerror(errno)))")
         }
         close(descriptor)
         return replacement
     }
 
-    private nonisolated static func waitForInstallExit(_ processID: Int32, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            var info = siginfo_t()
+    private nonisolated static func setNonBlocking(_ descriptor: Int32) -> Bool {
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0 else { return false }
+        return fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0
+    }
+
+    private nonisolated static func hasObservedExit(_ processID: Int32) -> Bool {
+        var info = siginfo_t()
+        while true {
             let result = waitid(P_PID, id_t(processID), &info, WEXITED | WNOHANG | WNOWAIT)
-            if result == 0, info.si_pid != 0 { return true }
-            if result < 0, errno != EINTR { return false }
-            usleep(100_000)
+            if result == 0 { return info.si_pid != 0 }
+            if errno == EINTR { continue }
+            return false
         }
-        return false
     }
 
-    private nonisolated static func stopInstallGroup(_ processID: Int32, timeout: TimeInterval) -> Bool {
-        let hasMembers = { dm_group_has_non_zombie_members(processID, processID) != 0 }
-        guard hasMembers() else { return true }
+    private nonisolated static func cleanupProcessGroup(processID: Int32, grace: TimeInterval) -> Bool {
+        // dm_group_has_non_zombie_members intentionally excludes its leader. Keep the
+        // owned leader as the group anchor until it is dead, otherwise a timed-out
+        // leader with no children would receive no signal and cleanup could claim success.
+        let hasLiveOwnedProcess = {
+            hasLiveLeader(processID: processID) || dm_group_has_non_zombie_members(processID, processID) != 0
+        }
+        guard hasLiveOwnedProcess() else { return true }
         _ = kill(-processID, SIGTERM)
-        let termDeadline = Date().addingTimeInterval(timeout)
-        while hasMembers() && Date() < termDeadline { usleep(50_000) }
-        if hasMembers() {
+        let termDeadline = Date().addingTimeInterval(grace)
+        while hasLiveOwnedProcess() && Date() < termDeadline { usleep(50_000) }
+        if hasLiveOwnedProcess() {
             _ = kill(-processID, SIGKILL)
-            let killDeadline = Date().addingTimeInterval(1.0)
-            while hasMembers() && Date() < killDeadline { usleep(50_000) }
+            let killDeadline = Date().addingTimeInterval(grace)
+            while hasLiveOwnedProcess() && Date() < killDeadline { usleep(50_000) }
         }
-        return !hasMembers()
+        return !hasLiveOwnedProcess()
     }
 
-    private nonisolated static func reapInstallProcess(_ processID: Int32, timeout: TimeInterval) -> Int32? {
+    private nonisolated static func hasLiveLeader(processID: Int32) -> Bool {
+        var groupID: pid_t = 0
+        var startSeconds: UInt64 = 0
+        var startMicroseconds: UInt32 = 0
+        // A negative inspection result is conservatively live/unknown: cleanup must
+        // not return success while ownership of the unreaped leader is uncertain.
+        return dm_process_identity(
+            processID,
+            &groupID,
+            &startSeconds,
+            &startMicroseconds
+        ) != 0
+    }
+
+    private nonisolated static func reapProcess(_ processID: Int32, timeout: TimeInterval) -> Int32? {
         let deadline = Date().addingTimeInterval(timeout)
         var status: Int32 = 0
         while Date() < deadline {
@@ -408,14 +439,42 @@ nonisolated enum ProvisioningCommandRunner {
         return nil
     }
 
-    private nonisolated static func installExitCode(_ status: Int32) -> Int32 {
+    private nonisolated static func exitCode(_ status: Int32) -> Int32 {
         (status & 0x7f) == 0 ? (status >> 8) & 0xff : -1
     }
 
-    private nonisolated static func drain(_ handle: FileHandle, into collector: ProvisioningInstallOutputCollector, stream: String) {
-        while true {
-            guard let data = try? handle.read(upToCount: 4096), !data.isEmpty else { break }
-            collector.append(String(decoding: data, as: UTF8.self), stream: stream)
+    private nonisolated static func drain(
+        _ descriptor: Int32,
+        into collector: ProvisioningOutputCollector,
+        stream: ProvisioningOutputCollector.OutputStream,
+        cancellation: ProvisioningDrainCancellation
+    ) {
+        defer { close(descriptor) }
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while !cancellation.isCancelled {
+            var pollDescriptor = pollfd(
+                fd: descriptor,
+                events: Int16(POLLIN | POLLHUP | POLLERR),
+                revents: 0
+            )
+            let pollResult = poll(&pollDescriptor, 1, 100)
+            if pollResult < 0 {
+                if errno == EINTR { continue }
+                return
+            }
+            guard pollResult > 0 else { continue }
+
+            while !cancellation.isCancelled {
+                let count = read(descriptor, &buffer, buffer.count)
+                if count > 0 {
+                    collector.append(Data(buffer.prefix(count)), stream: stream)
+                    continue
+                }
+                if count == 0 { return }
+                if errno == EINTR { continue }
+                if errno == EAGAIN || errno == EWOULDBLOCK { break }
+                return
+            }
         }
     }
 }
