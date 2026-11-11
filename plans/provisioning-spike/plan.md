@@ -54,7 +54,7 @@ Unsigned builds establish compilation, not VM launchability. Prepare the tester-
 | Phase | Outcome | Dependencies | Exit gate |
 | --- | --- | --- | --- |
 | 1 | Development-only setup can detect prerequisites and hand off to Apple's graphical installers. | User-provided VM and approvals. | Clean VM completes developer-tool/Homebrew setup; cancellation and recheck behave correctly. |
-| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible. | Phase 1 exit gate. | Fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions verified. |
+| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards. | Phase 1 exit gate. | Steps 2.1, 2.2, and the bounded 2.3 presentation follow-up are verified; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
 
 Delivery boundary: one feature-complete spike change for review; no publication or production rollout. Each step is a bounded review/revert unit. No separate atomic migration group is needed; each step remains buildable with its prerequisites.
 
@@ -152,11 +152,11 @@ Verification:
 Completion gate: AC2 and AC5 are demonstrated in the VM with unchanged shell files, including HTTP readiness and successful Stop/restart. Process-start handshake alone is not acceptance.
 Evidence location: [evidence/step-2.1.md](evidence/step-2.1.md).
 
-### Step 2.2 — Opt-in shell addition and final findings
+### Step 2.2 — Opt-in shell addition and findings
 
 Requirements / acceptance: R1, R7, R8; AC6, AC7 (remaining coverage), AC8. Phase exit integrates AC1–AC8.
 Depends on: Step 2.1, including its no-shell-edit proof.
-Review boundary: one clearly owned shell block plus final integration evidence; no general shell migration/repair.
+Review boundary: one clearly owned shell block plus concise findings; no general shell migration/repair. The Phase 2 integration exit gate remains required and is recorded after the approved Step 2.3 follow-up.
 
 Expected files:
 
@@ -173,15 +173,43 @@ Tasks:
 
 Verification:
 
-- Build: run Debug and Release builds; inspect DEBUG guards to confirm setup is absent from Release. Run the existing regression suite once at the Phase 2 gate, not after each edit.
+- Build: run Debug and Release builds; inspect DEBUG guards to confirm setup is absent from Release. Run the existing regression suite once at the Phase 2 integration gate after Step 2.3, not after each edit.
 - Manual, approved VM action: after 2.1 passes, opt in, inspect the file/backup, repeat configuration, and invoke a fresh interactive Zsh from the app to verify fnm and Node/pnpm resolution. No Terminal is needed. Restore and compare: unrelated contents survive, no duplicate loader is added, and an originally absent file is not populated with an unwanted loader.
 - Small safety check in the disposable VM: include one unrelated line before the opt-in/restore cycle and verify it survives; a clearly conflicting existing fnm block must be reported without rewriting it. Use disposable fixture data/app diagnostics or a graphical editor for tester setup, not a required end-user manual edit.
 - Manual ordinary-project check: on the prepared VM or existing development machine, launch a known-working project through normal Start without entering setup. It still uses its own command and produces no provisioning/authorization prompt.
 
-Completion gate: shell apply/repeat/fresh-shell/restore behavior and conflict refusal are observed, ordinary project behavior is unchanged, Release builds without setup, and findings accurately distinguish proven behavior from limitations.
+Completion gate: shell apply/repeat/fresh-shell/restore behavior and conflict refusal are observed, ordinary project behavior is unchanged, and findings accurately distinguish proven behavior from limitations. The required Release, regression, and Phase 2 integration checks remain pending and are recorded after Step 2.3.
 Evidence location: [evidence/step-2.2.md](evidence/step-2.2.md).
 
-Phase exit gate: after 2.2 verification, run the existing regression suite and review the final acceptance mapping against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate in `evidence/step-2.2.md`, then seek the user's review rather than proceeding to rollout.
+### Step 2.3 — Tighter DEBUG provisioning presentation
+
+Requirements / acceptance: R9, AC9; preserves all existing R1–R8 and AC1–AC8 contracts.
+Depends on: the Step 2.2 implementation and the user's reported successful shell walkthrough. This dependency does not imply that Step 2.2's Release, regression, ordinary-project, or final integration gates passed.
+Review boundary: a compact presentation follow-up only; retain the existing provisioning model guards, installer handoffs, fixture path, and optional shell helper. Do not add a workflow framework or change normal project UI.
+
+Expected files:
+
+- `dev-manager/App/ProvisioningModel.swift` — small computed next-action enum derived from current checks and external waiting/busy flags; no saved wizard progress.
+- `dev-manager/App/ProvisioningView.swift` — one footer action, accessible close, grouped status presentation, a title context menu with a separate Advanced / spike tools sheet, and scroll-safe layout.
+- `plans/provisioning-spike/spec.md` and `plans/provisioning-spike/overview.md` — stable R9/AC9 contract and concise orientation update.
+- `plans/provisioning-spike/plan.md`, `plans/provisioning-spike/evidence/changes.md`, and `plans/provisioning-spike/evidence/step-2.3.md` — approved bounded scope, dependency/gate note, and source-only evidence.
+
+Implementation tasks:
+
+- [x] Add the computed next-action model and preserve all existing `can*` safety guards, explicit confirmations, external waiting flags, and conflict refusal paths. When runtime is ready, expose **Configure shell — optional** only for `.notConfigured`; keep `.configured` and `.conflict` machine-ready/Done.
+- [x] Simplify the view to one primary footer action; retain Check again, fixture, output, and shell controls in a separate Advanced / spike tools sheet opened from the sheet-title context menu; group the runtime rows and keep actionable statuses visible. The optional shell action must map to the existing consent and never block readiness or close.
+- [x] Add accessible close/Escape behavior, a clearly closeable Advanced / spike tools sheet, and a scrollable, reasonable default/minimum layout without unrelated UI redesign.
+- [x] Record source-only evidence and leave user build/manual verification pending.
+
+Verification:
+
+- Source-only: inspect the diff for current-check derivation, waiting-state handling, preserved guards, DEBUG gating, title-context-menu access to the separate Advanced control surface, accessible close, and no new wizard state. Run no build, test, parse, launch, install, download, or VM action for this follow-up.
+- User-owned pending gates: build the Debug artifact in Xcode, inspect the ready VM and a fresh clone missing prerequisites, exercise external installer waiting, verify busy labels/disabled duplicates, and confirm fixture/shell/ordinary-project behavior remains intact. Release, regression, and final Phase 2 gates remain pending.
+
+Completion gate: source inspection and `git diff --check` only for this authoring pass; the Step 2.3 verification checkbox remains unchecked until the user reports the required Xcode/VM checks.
+Evidence location: [evidence/step-2.3.md](evidence/step-2.3.md).
+
+Phase exit gate: after Step 2.3 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC9 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final 2.3 verification (the prior Step 2.2 gate remains required), then seek the user's review rather than proceeding to rollout.
 
 ## Final acceptance
 
@@ -195,6 +223,7 @@ Phase exit gate: after 2.2 verification, run the existing regression suite and r
 | AC6 | 2.2 | Opt-in configuration works in a fresh Zsh; repeat/restore preserve unrelated content. | `evidence/step-2.2.md` |
 | AC7 | 1.1 guards; Phase 2 gate | Release compilation/source gating plus ordinary-project manual launch prove isolation. | `evidence/step-2.2.md` |
 | AC8 | 2.2; Phase 2 gate | Concise findings reflect observations and explicitly identify unrun cases. | `findings.md`, `evidence/step-2.2.md` |
+| AC9 | 2.3; final Phase 2 gate | One current-check-derived primary setup action, explicit external waiting, grouped runtime status, accessible close, and title-context-menu Advanced spike tools on a separate secondary surface; optional unconfigured shell state may offer Configure shell — optional, while configured/conflicting shell state remains Done; no shell prerequisite or guard bypass. | `evidence/step-2.3.md` and final acceptance review |
 
 No live workflow, build, test, installation, or VM acceptance has been run merely by authoring this plan.
 

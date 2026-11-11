@@ -17,7 +17,23 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var installationOutput = ""
     @Published private(set) var fixtureURL: URL?
     @Published private(set) var fixtureCommand: String?
-    @Published private(set) var message: String?
+    enum MessagePresentation: Equatable {
+        case progress(String)
+        case error(String)
+
+        var text: String {
+            switch self {
+            case let .progress(text), let .error(text): return text
+            }
+        }
+
+        var isError: Bool {
+            if case .error = self { return true }
+            return false
+        }
+    }
+
+    @Published private(set) var messagePresentation: MessagePresentation?
     @Published private(set) var shellConfigurationStatus = "The optional fnm shell configuration has not been checked."
     @Published private(set) var shellVerificationOutput = ""
     @Published private(set) var isConfiguringShell = false
@@ -29,9 +45,9 @@ final class ProvisioningModel: ObservableObject {
     @Published var isShowingShellConfigurationConsent = false
     @Published var isShowingShellRestoreConsent = false
 
-    private(set) var hasCompletedCheck = false
-    private var commandLineToolsRequestNeedsCheck = false
-    private var homebrewHandoffNeedsCheck = false
+    @Published private(set) var hasCompletedCheck = false
+    @Published private(set) var commandLineToolsRequestNeedsCheck = false
+    @Published private(set) var homebrewHandoffNeedsCheck = false
     private var checkGeneration = 0
     private var fnmExecutableURL: URL?
 
@@ -39,8 +55,102 @@ final class ProvisioningModel: ObservableObject {
         Self.environmentIssue
     }
 
+    var message: String? {
+        messagePresentation?.text
+    }
+
+    private func showProgress(_ text: String) {
+        messagePresentation = .progress(text)
+    }
+
+    private func showError(_ text: String) {
+        messagePresentation = .error(text)
+    }
+
+    private func clearMessage() {
+        messagePresentation = nil
+    }
+
     var isSupportedEnvironment: Bool {
         supportedEnvironmentIssue == nil
+    }
+
+    enum NextAction: Equatable {
+        case checkInstallation
+        case installAppleDeveloperTools
+        case installHomebrew
+        case setupNodeAndPnpm
+        case configureShellOptional
+        case reviewDetails
+        case done
+        case checking
+        case openingAppleInstaller
+        case downloadingHomebrew
+        case installingRuntime
+        case working
+        case unsupported
+
+        var title: String {
+            switch self {
+            case .checkInstallation: return "Check installation"
+            case .installAppleDeveloperTools: return "Install Apple developer tools"
+            case .installHomebrew: return "Install Homebrew"
+            case .setupNodeAndPnpm: return "Set up Node and pnpm"
+            case .configureShellOptional: return "Configure shell — optional"
+            case .reviewDetails: return "Review setup details"
+            case .done: return "Done"
+            case .checking: return "Checking…"
+            case .openingAppleInstaller: return "Opening Apple installer…"
+            case .downloadingHomebrew: return "Downloading Homebrew.pkg…"
+            case .installingRuntime: return "Setting up Node and pnpm…"
+            case .working: return "Working…"
+            case .unsupported: return "Setup unavailable"
+            }
+        }
+    }
+
+    var nextAction: NextAction {
+        if isChecking { return .checking }
+        if isRequestingCommandLineTools { return .openingAppleInstaller }
+        if isDownloadingHomebrew { return .downloadingHomebrew }
+        if isInstallingRuntime { return .installingRuntime }
+        if isConfiguringShell || isVerifyingShell || isRestoringShell { return .working }
+        if !hasCompletedCheck || commandLineToolsRequestNeedsCheck || homebrewHandoffNeedsCheck {
+            return .checkInstallation
+        }
+        guard isSupportedEnvironment else { return .unsupported }
+
+        if developerToolsReady {
+            // Continue below.
+        } else if checks.first(where: { $0.id == .developerTools })?.state.isMissing == true,
+                  canRequestCommandLineTools {
+            return .installAppleDeveloperTools
+        } else {
+            return .reviewDetails
+        }
+
+        if homebrewState?.isReady == true {
+            // Continue below.
+        } else if homebrewMissing, canRequestHomebrew {
+            return .installHomebrew
+        } else {
+            return .reviewDetails
+        }
+
+        if allRuntimeToolsReady {
+            switch ProvisioningShellConfiguration.inspect() {
+            case .notConfigured where canConfigureShell:
+                return .configureShellOptional
+            case .configured, .notConfigured, .conflict:
+                return .done
+            }
+        }
+        if canInstallRuntime { return .setupNodeAndPnpm }
+        return .reviewDetails
+    }
+
+    var allRuntimeToolsReady: Bool {
+        fnmState?.isReady == true && nodeState?.isReady == true && pnpmState?.isReady == true
     }
 
     var developerToolsReady: Bool {
@@ -50,18 +160,20 @@ final class ProvisioningModel: ObservableObject {
     var canRequestCommandLineTools: Bool {
         hasCompletedCheck && isSupportedEnvironment && !commandLineToolsRequestNeedsCheck &&
             !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew &&
-            !isInstallingRuntime && !developerToolsReady
+            !isInstallingRuntime && !isConfiguringShell && !isVerifyingShell && !isRestoringShell && !developerToolsReady
     }
 
     var canRequestHomebrew: Bool {
         hasCompletedCheck && isSupportedEnvironment && developerToolsReady &&
             !homebrewHandoffNeedsCheck && !isChecking && !isRequestingCommandLineTools &&
-            !isDownloadingHomebrew && !isInstallingRuntime && homebrewMissing
+            !isDownloadingHomebrew && !isInstallingRuntime && !isConfiguringShell && !isVerifyingShell &&
+            !isRestoringShell && homebrewMissing
     }
 
     var canInstallRuntime: Bool {
         guard hasCompletedCheck, isSupportedEnvironment, developerToolsReady, !isChecking,
               !isRequestingCommandLineTools, !isDownloadingHomebrew, !isInstallingRuntime,
+              !isConfiguringShell, !isVerifyingShell, !isRestoringShell,
               homebrewState?.isReady == true else { return false }
         guard fnmState?.isReady == true || fnmState?.isMissing == true else { return false }
         guard nodeState?.isReady == true || nodeState?.isMissing == true || nodeState?.isUnverified == true else { return false }
@@ -105,14 +217,15 @@ final class ProvisioningModel: ObservableObject {
         checks.first(where: { $0.id == .pnpm })?.state
     }
 
-    func checkAgain() async {
+    func checkAgain(allowDuringInstallation: Bool = false) async {
         guard !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew &&
+                (allowDuringInstallation || !isInstallingRuntime) &&
                 !isConfiguringShell && !isVerifyingShell && !isRestoringShell else { return }
         checkGeneration += 1
         let generation = checkGeneration
         hasCompletedCheck = false
         isChecking = true
-        message = "Inspecting installed tools…"
+        showProgress("Inspecting installed tools…")
         checks = ProvisioningCheck.all.map { ProvisioningCheck(id: $0.id, state: .checking) }
 
         let developerTools = await checkDeveloperTools()
@@ -126,12 +239,12 @@ final class ProvisioningModel: ObservableObject {
         isChecking = false
         hasCompletedCheck = true
         commandLineToolsRequestNeedsCheck = false
-        homebrewHandoffNeedsCheck = !homebrew.check.state.isMissing
+        homebrewHandoffNeedsCheck = false
         shellConfigurationStatus = ProvisioningShellConfiguration.inspect().message
         if let supportedEnvironmentIssue {
-            message = "Inspection complete. Machine-changing actions are disabled: \(supportedEnvironmentIssue)"
+            showError("Machine-changing setup is disabled: \(supportedEnvironmentIssue)")
         } else {
-            message = "Inspection complete. Installation requests are never treated as completion; press Check again after Apple's UI finishes."
+            clearMessage()
         }
     }
 
@@ -140,13 +253,14 @@ final class ProvisioningModel: ObservableObject {
             throw ProvisioningShellConfiguration.ConfigurationError.unsupported("the supported environment and pinned fnm/Node/pnpm runtime are not ready")
         }
         isConfiguringShell = true
+        showProgress("Configuring the optional shell…")
         defer { isConfiguringShell = false }
         do {
             shellConfigurationStatus = try ProvisioningShellConfiguration.configure(using: fnmExecutableURL, nodeVersion: Self.nodeVersion)
-            message = "Optional shell configuration completed. It is not required for the app's fixture."
+            clearMessage()
         } catch {
             shellConfigurationStatus = error.localizedDescription
-            message = error.localizedDescription
+            showError(error.localizedDescription)
             throw error
         }
     }
@@ -154,6 +268,7 @@ final class ProvisioningModel: ObservableObject {
     func verifyFreshShell() async {
         guard canVerifyShell else { return }
         isVerifyingShell = true
+        showProgress("Checking a fresh interactive Zsh…")
         defer { isVerifyingShell = false }
         do {
             let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
@@ -189,23 +304,24 @@ final class ProvisioningModel: ObservableObject {
                 throw ProvisioningShellConfiguration.ConfigurationError.conflict("fresh interactive Zsh resolved unexpected fnm, Node, or pnpm paths/versions; no shell file was changed")
             }
             shellConfigurationStatus = "Fresh interactive Zsh verified fnm, Node \(Self.nodeVersion), and pnpm \(Self.pnpmVersion). This check used /bin/zsh -i -c and did not use a login shell."
-            message = shellConfigurationStatus
+            clearMessage()
         } catch {
             shellConfigurationStatus = error.localizedDescription
-            message = error.localizedDescription
+            showError(error.localizedDescription)
         }
     }
 
     func restoreShell() throws {
         guard canRestoreShell else { return }
         isRestoringShell = true
+        showProgress("Restoring the optional shell configuration…")
         defer { isRestoringShell = false }
         do {
             shellConfigurationStatus = try ProvisioningShellConfiguration.restore()
-            message = "The optional shell configuration was restored without changing unrelated shell content."
+            clearMessage()
         } catch {
             shellConfigurationStatus = error.localizedDescription
-            message = error.localizedDescription
+            showError(error.localizedDescription)
             throw error
         }
     }
@@ -214,7 +330,8 @@ final class ProvisioningModel: ObservableObject {
         guard canRequestCommandLineTools else { return }
         isRequestingCommandLineTools = true
         commandLineToolsRequestNeedsCheck = true
-        message = "Requesting Apple's Command Line Tools installer dialog…"
+        setDeveloperToolsState(.waiting("Apple's installer dialog was requested. Finish or cancel it, then press Check installation; opening the dialog is not completion."))
+        showProgress("Requesting Apple's Command Line Tools installer dialog…")
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
@@ -224,7 +341,11 @@ final class ProvisioningModel: ObservableObject {
                 guard let self else { return }
                 self.isRequestingCommandLineTools = false
                 let status = process.terminationStatus
-                self.message = "Apple's installer request returned (status \(status)). No installation was inferred; complete or cancel Apple's dialog, then press Check again before retrying."
+                if status == 0 {
+                    self.clearMessage()
+                } else {
+                    self.showError("Could not request Apple's Command Line Tools installer (status \(status)). Press Check again before retrying.")
+                }
             }
         }
 
@@ -232,7 +353,7 @@ final class ProvisioningModel: ObservableObject {
             try process.run()
         } catch {
             isRequestingCommandLineTools = false
-            message = "Could not request Apple's Command Line Tools installer: \(error.localizedDescription)"
+            showError("Could not request Apple's Command Line Tools installer: \(error.localizedDescription)")
         }
     }
 
@@ -276,7 +397,7 @@ final class ProvisioningModel: ObservableObject {
         isDownloadingHomebrew = true
         homebrewHandoffNeedsCheck = true
         setHomebrewState(.waiting("Preparing the official Homebrew.pkg; installation is not complete."))
-        message = "Looking up the latest official Homebrew.pkg…"
+        showProgress("Looking up the latest official Homebrew.pkg…")
 
         do {
             let packageURL = try await downloadHomebrewPackage()
@@ -284,10 +405,10 @@ final class ProvisioningModel: ObservableObject {
                 throw HomebrewProvisioningError.couldNotOpenInstaller
             }
             setHomebrewState(.waiting("Homebrew.pkg was opened in macOS Installer. Finish or cancel it, then press Check again; opening it is not success."))
-            message = "Homebrew.pkg was handed to macOS Installer. Complete or cancel Apple's UI, then press Check again before retrying."
+            clearMessage()
         } catch {
             setHomebrewState(.attention("Homebrew handoff failed: \(error.localizedDescription)"))
-            message = "Homebrew handoff failed: \(error.localizedDescription) Press Check again before retrying."
+            showError("Homebrew handoff failed: \(error.localizedDescription) Press Check again before retrying.")
         }
         isDownloadingHomebrew = false
     }
@@ -318,7 +439,7 @@ final class ProvisioningModel: ObservableObject {
             throw HomebrewProvisioningError.invalidDownloadURL
         }
 
-        message = "Downloading Homebrew.pkg from Homebrew's official release…"
+        showProgress("Downloading Homebrew.pkg from Homebrew's official release…")
         var downloadRequest = URLRequest(url: downloadURL)
         downloadRequest.setValue("DevManager/0.1 provisioning-spike", forHTTPHeaderField: "User-Agent")
         let (temporaryURL, downloadResponse) = try await session.download(for: downloadRequest)
@@ -346,6 +467,13 @@ final class ProvisioningModel: ObservableObject {
         guard checks.contains(where: { $0.id == .homebrew }) else { return }
         checks = checks.map {
             $0.id == .homebrew ? ProvisioningCheck(id: .homebrew, state: state) : $0
+        }
+    }
+
+    private func setDeveloperToolsState(_ state: ProvisioningCheck.State) {
+        guard checks.contains(where: { $0.id == .developerTools }) else { return }
+        checks = checks.map {
+            $0.id == .developerTools ? ProvisioningCheck(id: .developerTools, state: state) : $0
         }
     }
 
@@ -460,13 +588,13 @@ final class ProvisioningModel: ObservableObject {
         defer { isInstallingRuntime = false }
 
         guard homebrewState?.isReady == true else {
-            message = "Homebrew is not ready; runtime installation was not started."
+            showError("Homebrew is not ready; runtime installation was not started.")
             return
         }
 
         var fnm = fnmExecutableURL
         if fnm == nil {
-            message = "Installing fnm through /opt/homebrew/bin/brew…"
+            showProgress("Installing fnm through /opt/homebrew/bin/brew…")
             let result = await runInstallProcess(
                 executableURL: URL(fileURLWithPath: "/opt/homebrew/bin/brew"),
                 arguments: ["install", "fnm"],
@@ -475,24 +603,24 @@ final class ProvisioningModel: ObservableObject {
             )
             recordInstallationResult(result, label: "brew install fnm")
             guard result.succeeded else {
-                message = "fnm installation failed. The fixture was not prepared; press Check again and retry after reviewing the output."
+                showError("fnm installation failed. The fixture was not prepared; press Check again and retry after reviewing the output.")
                 return
             }
-            await checkAgain()
+            await checkAgain(allowDuringInstallation: true)
             guard fnmState?.isReady == true, let detectedFNM = fnmExecutableURL else {
-                message = "fnm was not usable after Homebrew finished. The fixture was not prepared; review the fnm check and retry."
+                showError("fnm was not usable after Homebrew finished. The fixture was not prepared; review the fnm check and retry.")
                 return
             }
             fnm = detectedFNM
         }
 
         guard fnmState?.isReady == true, let fnm else {
-            message = "The existing fnm installation needs attention. It was not replaced or upgraded."
+            showError("The existing fnm installation needs attention. It was not replaced or upgraded.")
             return
         }
 
         if nodeState?.isMissing == true {
-            message = "Installing Node \(Self.nodeVersion) in fnm…"
+            showProgress("Installing Node \(Self.nodeVersion) in fnm…")
             let result = await runInstallProcess(
                 executableURL: fnm,
                 arguments: ["install", Self.nodeVersion],
@@ -501,19 +629,19 @@ final class ProvisioningModel: ObservableObject {
             )
             recordInstallationResult(result, label: "fnm install \(Self.nodeVersion)")
             guard result.succeeded else {
-                message = "Node \(Self.nodeVersion) installation failed. Dependent steps were not started."
+                showError("Node \(Self.nodeVersion) installation failed. Dependent steps were not started.")
                 return
             }
-            await checkAgain()
+            await checkAgain(allowDuringInstallation: true)
         }
 
         guard nodeState?.isReady == true else {
-            message = "Node \(Self.nodeVersion) is not usable through fnm. The existing installation was left unchanged."
+            showError("Node \(Self.nodeVersion) is not usable through fnm. The existing installation was left unchanged.")
             return
         }
 
         if pnpmState?.isMissing == true {
-            message = "Installing pnpm \(Self.pnpmVersion) inside Node \(Self.nodeVersion)…"
+            showProgress("Installing pnpm \(Self.pnpmVersion) inside Node \(Self.nodeVersion)…")
             let result = await runInstallProcess(
                 executableURL: fnm,
                 arguments: ["exec", "--using", Self.nodeVersion, "npm", "install", "--global", "pnpm@\(Self.pnpmVersion)"],
@@ -522,14 +650,14 @@ final class ProvisioningModel: ObservableObject {
             )
             recordInstallationResult(result, label: "npm install --global pnpm@\(Self.pnpmVersion)")
             guard result.succeeded else {
-                message = "pnpm \(Self.pnpmVersion) installation failed. The fixture was not prepared."
+                showError("pnpm \(Self.pnpmVersion) installation failed. The fixture was not prepared.")
                 return
             }
-            await checkAgain()
+            await checkAgain(allowDuringInstallation: true)
         }
 
         guard nodeState?.isReady == true, pnpmState?.isReady == true else {
-            message = "The pinned runtime is not fully usable. Existing conflicting or unusable tools were left unchanged; the fixture was not prepared."
+            showError("The pinned runtime is not fully usable. Existing conflicting or unusable tools were left unchanged; the fixture was not prepared.")
             return
         }
 
@@ -537,9 +665,9 @@ final class ProvisioningModel: ObservableObject {
             let fixture = try materializeFixture(using: fnm)
             fixtureURL = fixture.folder
             fixtureCommand = fixture.command
-            message = "Pinned runtime is ready. The dependency-free HTTP fixture is prepared; use Show fixture project to hand it to the existing project UI."
+            clearMessage()
         } catch {
-            message = "Fixture preparation failed without changing conflicting files: \(error.localizedDescription)"
+            showError("Fixture preparation failed without changing conflicting files: \(error.localizedDescription)")
         }
     }
 
@@ -1148,7 +1276,7 @@ struct ProvisioningCheck: Identifiable, Equatable {
             switch self {
             case .developerTools: return "Apple developer tools"
             case .homebrew: return "Homebrew"
-            case .fnm: return "fnm"
+            case .fnm: return "Fast Node Manager (fnm)"
             case .node: return "Node 24.22.2"
             case .pnpm: return "pnpm 12.18.0"
             }
