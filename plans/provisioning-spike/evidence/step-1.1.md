@@ -1,6 +1,6 @@
 # Step 1.1 evidence
 
-Status: source follow-up recorded; Step 1.1 is not complete. User-build and manual VM gates remain pending.
+Status: Step 1.1 manual gate confirmed by the user; Step 1.2 is now the active pending step. The baseline-detail caveat below remains open.
 
 ## Implemented
 
@@ -17,9 +17,20 @@ Status: source follow-up recorded; Step 1.1 is not complete. User-build and manu
 - Read-only host inspection used the installed fnm help/list commands. No installer, provisioning, shell-file, password, sudo, or global runner changes were performed on the host.
 - UI state refinement: added an explicit `.unverified(String)` state. Missing/unusable fnm or pinned Node now leaves dependent Node/pnpm checks neutral while preserving real Node/fnm attention and missing states; pnpm-specific failures remain attention. The unverified row uses a muted dashed-circle-and-question-mark indicator with an accessibility label.
 
+## Manual 1.1 confirmation
+
+The user reports that both representative Command Line Tools checks passed in a fresh Tart clone:
+
+- Cancellation: the Apple installer dialog was canceled, then **Check again** still showed developer tools missing; setup did not advance.
+- Retry: the Apple installer flow completed, then **Check again** showed the developer tools ready; readiness came from the functional recheck, not request submission.
+
+The supplied screenshot (`/Users/andy/Library/Application Support/CleanShot/media/media_zfBBJrlmc/CleanShot 2026-11-11 at 6.54.48 AM@2x.png`) independently shows the ready state with selected tools at `/Library/Developer/CommandLineTools` and the `clang` path, while Homebrew is missing. It does not document the cancellation sequence. The screenshot predates the neutral-icon update; the user separately checked the updated neutral icons and reported that they look good.
+
+The user also confirmed that the latest 1.1 code was built and launched for this walkthrough. This is user-reported confirmation, not an agent-run build; prior host build records below are preserved and are not replaced by it.
+
 ## Follow-up verification
 
-Source inspection only for this follow-up: the check IDs, row titles, paired runtime result, required Node-context wording, read-only fnm inventory check, Corepack no-network environment, neutral downstream state mapping, and status indicator/accessibility label were reviewed. `git diff --check` completed successfully. Per the user's instruction, no build, test, or `xcodebuild` command was run for this change; the latest source has not been VM-verified.
+Source inspection only for this follow-up: the check IDs, row titles, paired runtime result, required Node-context wording, read-only fnm inventory check, Corepack no-network environment, neutral downstream state mapping, and status indicator/accessibility label were reviewed. `git diff --check` completed successfully. Per the user's instruction, no build, test, or `xcodebuild` command was run for this change.
 
 The host build records below are historical evidence from before this follow-up; they do not validate the current source. The user must build in Xcode and retrieve the resulting Derived Data for manual checking.
 
@@ -46,12 +57,14 @@ After the runtime pin follow-up to Node `24.22.2` and pnpm `12.18.0`, the same D
 
 Source inspection: `ProvisioningModel.swift`, `ProvisioningView.swift`, and the setup state/button in `ContentView.swift` are guarded by `#if DEBUG`; no Release configuration or existing runner source was changed.
 
-## Pending user build and manual VM gate
+## Remaining 1.1 caveat
 
-The VM is human-controlled and was not accessed by this run. The user must build the current source in Xcode, retrieve the current Debug artifact from Derived Data, and then record these observations. Do not mark the verification task complete until they are recorded:
+The user described the source VM as a fresh Tart clone and confirmed launchability, but this note does not independently restate its macOS version, Apple Silicon architecture, administrator status, or snapshot details. Preserve that caveat for the broader evidence review; it does not invalidate the specifically reported cancellation/retry result.
 
-1. Capture the clean VM/app baseline and confirm the supported Apple Silicon administrator environment.
-2. Launch the current Debug artifact, open Setup, and capture separate visible `Node 24.22.2` and `pnpm 12.18.0` rows even when the pinned runtime is unavailable. The pnpm detail should say it is not yet verified in the required Node context, not that pnpm is independently missing.
-3. Give consent to request Command Line Tools, cancel Apple's dialog, press Check again, and capture that developer tools remain missing/unusable and no dependent installation is presented.
-4. Retry, accept Apple's graphical install/license flow, then press Check again. Capture the status showing functional developer-tool checks (not merely request/process return), plus the independent Node/pnpm statuses.
-5. Include a screenshot or equivalent status capture showing the cancellation/retry and final functional Check-again results. Any failed or unrun manual item remains pending; no installer success is inferred from this host build.
+No further 1.1 user build or manual gate is requested here. The VM is human-controlled and was not accessed by this run. The user must build the Step 1.2 source in Xcode, retrieve the current Debug artifact from Derived Data, and then record these observations for Step 1.2:
+
+1. Build the Step 1.2 source in Xcode and transfer the resulting Debug artifact from Derived Data to the VM.
+2. Confirm the supported Apple Silicon administrator environment, then open Setup and verify that Homebrew remains missing until the package handoff is completed.
+3. Give consent to download the exact official `Homebrew.pkg`, observe the normal macOS Installer handoff, and confirm the app shows waiting rather than Homebrew ready.
+4. Complete or cancel Installer, press Check again, and record whether `/opt/homebrew/bin/brew --version` succeeds as the current user. Any failure remains an error/attention state.
+5. Quit and reopen the app, press Check again, and confirm actual developer-tool/Homebrew state is reused without an automatic duplicate installer request. Record any failed or unrun item as pending.

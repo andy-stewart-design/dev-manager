@@ -81,7 +81,7 @@ Tasks:
 - [ ] Establish host build and clean VM baseline: app opens, administrator/OS/architecture are suitable, prerequisites are absent or explicitly recorded, and a clean snapshot exists. Record relevant pre-existing failures separately.
 - [x] Add the setup screen and read-only tool checks. Choose one exact compatible Node/pnpm pair for later fixture use; detect selected developer tools, Homebrew, fnm, and that runtime without sourcing or editing user shell files.
 - [x] Add explicit-consent Command Line Tools installation via `/usr/bin/xcode-select --install`. Treat return as request submission; provide manual Check again and functional developer-tool verification. Reuse usable full Xcode rather than forcing standalone tools.
-- [ ] Satisfy the verification and completion gate below and record concise evidence.
+- [x] Satisfy the verification and completion gate below and record concise evidence.
 
 Verification:
 
@@ -104,8 +104,8 @@ Expected files:
 
 Tasks:
 
-- [ ] Download the Apple Silicon package from Homebrew's official GitHub release location and open it with macOS Installer. Retain system signature/security checks; do not invoke a privileged command-line installer or create an alternate-user plist.
-- [ ] Verify `/opt/homebrew/bin/brew` executes as the console user. Report launch/download/verification failures without advancing. Reopening the app must inspect the machine again rather than automatically relaunch an external installer.
+- [x] Download the Apple Silicon package from Homebrew's official GitHub release location and open it with macOS Installer. Retain system signature/security checks; do not invoke a privileged command-line installer or create an alternate-user plist.
+- [x] Verify `/opt/homebrew/bin/brew` executes as the console user. Report launch/download/verification failures without advancing. Reopening the app must inspect the machine again rather than automatically relaunch an external installer.
 - [ ] Satisfy the verification and completion gate below and record concise evidence.
 
 Verification:

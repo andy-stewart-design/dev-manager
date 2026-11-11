@@ -56,7 +56,7 @@ struct ProvisioningView: View {
                 } label: {
                     Label("Check again", systemImage: "arrow.clockwise")
                 }
-                .disabled(model.isChecking || model.isRequestingCommandLineTools)
+                .disabled(model.isChecking || model.isRequestingCommandLineTools || model.isDownloadingHomebrew)
 
                 Button {
                     model.isShowingCommandLineToolsConsent = true
@@ -64,6 +64,13 @@ struct ProvisioningView: View {
                     Label("Request Command Line Tools…", systemImage: "arrow.down.circle")
                 }
                 .disabled(!model.canRequestCommandLineTools)
+
+                Button {
+                    model.isShowingHomebrewConsent = true
+                } label: {
+                    Label("Download Homebrew.pkg…", systemImage: "shippingbox")
+                }
+                .disabled(!model.canRequestHomebrew)
 
                 Spacer()
             }
@@ -87,18 +94,32 @@ struct ProvisioningView: View {
         } message: {
             Text("macOS will show its own installer UI. Dev Manager does not collect a password and will not treat the request as installed. Complete or cancel Apple's dialog, then press Check again.")
         }
+        .confirmationDialog(
+            "Download and open Homebrew.pkg?",
+            isPresented: $model.isShowingHomebrewConsent,
+            titleVisibility: .visible
+        ) {
+            Button("Download and open Installer") {
+                Task { await model.downloadAndOpenHomebrewPackage() }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Dev Manager will fetch the exact Homebrew.pkg asset from Homebrew's official GitHub release, save it locally, and open it through macOS Installer. Complete or cancel Apple's UI there; no password is collected and opening the package is not installation success. Press Check again before retrying.")
+        }
     }
 
     private func detail(for state: ProvisioningCheck.State) -> String {
         switch state {
         case .checking: return "Checking…"
-        case let .unverified(detail), let .ready(detail), let .missing(detail), let .attention(detail): return detail
+        case let .waiting(detail), let .unverified(detail), let .ready(detail), let .missing(detail), let .attention(detail): return detail
         }
     }
 
     @ViewBuilder
     private func statusIcon(for state: ProvisioningCheck.State) -> some View {
         switch state {
+        case .waiting:
+            Image(systemName: "hourglass")
         case .unverified:
             ZStack {
                 Circle()
@@ -121,6 +142,7 @@ struct ProvisioningView: View {
     private func accessibilityLabel(for state: ProvisioningCheck.State) -> String {
         switch state {
         case .checking: return "Checking"
+        case .waiting: return "Waiting for external installer"
         case .unverified: return "Not yet verified"
         case .ready: return "Ready"
         case .missing: return "Missing"
@@ -131,6 +153,7 @@ struct ProvisioningView: View {
     private func color(for state: ProvisioningCheck.State) -> Color {
         switch state {
         case .checking: return .secondary
+        case .waiting: return .secondary
         case .unverified: return .secondary
         case .ready: return .green
         case .missing: return .secondary

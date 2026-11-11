@@ -1,4 +1,5 @@
 #if DEBUG
+import AppKit
 import Combine
 import Darwin
 import Foundation
@@ -11,11 +12,14 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var checks: [ProvisioningCheck] = []
     @Published private(set) var isChecking = false
     @Published private(set) var isRequestingCommandLineTools = false
+    @Published private(set) var isDownloadingHomebrew = false
     @Published private(set) var message: String?
     @Published var isShowingCommandLineToolsConsent = false
+    @Published var isShowingHomebrewConsent = false
 
     private(set) var hasCompletedCheck = false
     private var commandLineToolsRequestNeedsCheck = false
+    private var homebrewHandoffNeedsCheck = false
     private var checkGeneration = 0
 
     var supportedEnvironmentIssue: String? {
@@ -32,11 +36,21 @@ final class ProvisioningModel: ObservableObject {
 
     var canRequestCommandLineTools: Bool {
         hasCompletedCheck && isSupportedEnvironment && !commandLineToolsRequestNeedsCheck &&
-            !isChecking && !isRequestingCommandLineTools && !developerToolsReady
+            !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew && !developerToolsReady
+    }
+
+    var canRequestHomebrew: Bool {
+        hasCompletedCheck && isSupportedEnvironment && developerToolsReady &&
+            !homebrewHandoffNeedsCheck && !isChecking && !isRequestingCommandLineTools &&
+            !isDownloadingHomebrew && homebrewMissing
+    }
+
+    private var homebrewMissing: Bool {
+        checks.first(where: { $0.id == .homebrew })?.state.isMissing == true
     }
 
     func checkAgain() async {
-        guard !isChecking && !isRequestingCommandLineTools else { return }
+        guard !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew else { return }
         checkGeneration += 1
         let generation = checkGeneration
         hasCompletedCheck = false
@@ -54,6 +68,7 @@ final class ProvisioningModel: ObservableObject {
         isChecking = false
         hasCompletedCheck = true
         commandLineToolsRequestNeedsCheck = false
+        homebrewHandoffNeedsCheck = !homebrew.check.state.isMissing
         if let supportedEnvironmentIssue {
             message = "Inspection complete. Machine-changing actions are disabled: \(supportedEnvironmentIssue)"
         } else {
@@ -110,18 +125,94 @@ final class ProvisioningModel: ObservableObject {
     }
 
     private func checkHomebrew() async -> (check: ProvisioningCheck, executableURL: URL?) {
-        guard let brew = firstExecutable(candidates: [
-            "/opt/homebrew/bin/brew",
-            "/usr/local/bin/brew"
-        ]) else {
-            return (ProvisioningCheck(id: .homebrew, state: .missing("Homebrew was not found in the standard Apple Silicon or Intel prefix.")), nil)
+        let brew = URL(fileURLWithPath: "/opt/homebrew/bin/brew")
+        guard FileManager.default.isExecutableFile(atPath: brew.path) else {
+            return (ProvisioningCheck(id: .homebrew, state: .missing("Homebrew was not found at /opt/homebrew/bin/brew.")), nil)
         }
 
         let result = await run(brew, arguments: ["--version"])
         guard result.succeeded else {
             return (ProvisioningCheck(id: .homebrew, state: .attention("Found \(brew.path), but it did not run as the current user: \(commandFailure("brew --version", result: result))")), brew)
         }
-        return (ProvisioningCheck(id: .homebrew, state: .ready(result.stdout.firstNonEmptyLine ?? brew.path)), brew)
+        return (ProvisioningCheck(id: .homebrew, state: .ready("\(result.stdout.firstNonEmptyLine ?? brew.path); \(brew.path) ran as the current user")), brew)
+    }
+
+    func downloadAndOpenHomebrewPackage() async {
+        guard canRequestHomebrew else { return }
+        isDownloadingHomebrew = true
+        homebrewHandoffNeedsCheck = true
+        setHomebrewState(.waiting("Preparing the official Homebrew.pkg; installation is not complete."))
+        message = "Looking up the latest official Homebrew.pkg…"
+
+        do {
+            let packageURL = try await downloadHomebrewPackage()
+            guard NSWorkspace.shared.open(packageURL) else {
+                throw HomebrewProvisioningError.couldNotOpenInstaller
+            }
+            setHomebrewState(.waiting("Homebrew.pkg was opened in macOS Installer. Finish or cancel it, then press Check again; opening it is not success."))
+            message = "Homebrew.pkg was handed to macOS Installer. Complete or cancel Apple's UI, then press Check again before retrying."
+        } catch {
+            setHomebrewState(.attention("Homebrew handoff failed: \(error.localizedDescription)"))
+            message = "Homebrew handoff failed: \(error.localizedDescription) Press Check again before retrying."
+        }
+        isDownloadingHomebrew = false
+    }
+
+    private func downloadHomebrewPackage() async throws -> URL {
+        guard let apiURL = URL(string: Self.homebrewReleaseAPIURL) else {
+            throw HomebrewProvisioningError.invalidReleaseAPI
+        }
+
+        var apiRequest = URLRequest(url: apiURL)
+        apiRequest.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        apiRequest.setValue("DevManager/0.1 provisioning-spike", forHTTPHeaderField: "User-Agent")
+        apiRequest.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        let session = Self.homebrewURLSession()
+        let (data, response) = try await session.data(for: apiRequest)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw HomebrewProvisioningError.releaseAPI(status: status)
+        }
+
+        let release = try JSONDecoder().decode(HomebrewRelease.self, from: data)
+        guard let asset = release.assets.first(where: { $0.name == Self.homebrewPackageName }) else {
+            throw HomebrewProvisioningError.assetNotFound
+        }
+        guard let downloadURL = URL(string: asset.browserDownloadURL),
+              Self.isOfficialHomebrewDownloadURL(downloadURL) else {
+            throw HomebrewProvisioningError.invalidDownloadURL
+        }
+
+        message = "Downloading Homebrew.pkg from Homebrew's official release…"
+        var downloadRequest = URLRequest(url: downloadURL)
+        downloadRequest.setValue("DevManager/0.1 provisioning-spike", forHTTPHeaderField: "User-Agent")
+        let (temporaryURL, downloadResponse) = try await session.download(for: downloadRequest)
+        guard let downloadHTTPResponse = downloadResponse as? HTTPURLResponse,
+              (200..<300).contains(downloadHTTPResponse.statusCode) else {
+            let status = (downloadResponse as? HTTPURLResponse)?.statusCode ?? -1
+            throw HomebrewProvisioningError.packageDownload(status: status)
+        }
+        guard downloadHTTPResponse.url?.scheme?.lowercased() == "https" else {
+            throw HomebrewProvisioningError.insecurePackageDownload
+        }
+
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DevManager-Homebrew-\(UUID().uuidString).pkg")
+        try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+        let attributes = try FileManager.default.attributesOfItem(atPath: destinationURL.path)
+        guard let byteCount = attributes[.size] as? NSNumber, byteCount.int64Value > 0 else {
+            try? FileManager.default.removeItem(at: destinationURL)
+            throw HomebrewProvisioningError.emptyPackage
+        }
+        return destinationURL
+    }
+
+    private func setHomebrewState(_ state: ProvisioningCheck.State) {
+        guard checks.contains(where: { $0.id == .homebrew }) else { return }
+        checks = checks.map {
+            $0.id == .homebrew ? ProvisioningCheck(id: .homebrew, state: state) : $0
+        }
     }
 
     private func checkFNM() async -> (check: ProvisioningCheck, executableURL: URL?) {
@@ -245,6 +336,24 @@ final class ProvisioningModel: ObservableObject {
     }
 
     private static let commandTimeout: TimeInterval = 8
+    private static let homebrewReleaseAPIURL = "https://api.github.com/repos/Homebrew/brew/releases/latest"
+    private static let homebrewPackageName = "Homebrew.pkg"
+    private static let officialHomebrewReleasePrefix = "https://github.com/Homebrew/brew/releases/download/"
+
+    private static func homebrewURLSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 60 * 60
+        return URLSession(configuration: configuration)
+    }
+
+    private static func isOfficialHomebrewDownloadURL(_ url: URL) -> Bool {
+        url.absoluteString.hasPrefix(officialHomebrewReleasePrefix) &&
+            url.scheme?.lowercased() == "https" &&
+            url.host?.lowercased() == "github.com" &&
+            url.pathComponents.last == homebrewPackageName
+    }
 
     private static let readOnlyRuntimeEnvironment: [String: String] = [
         "FNM_COREPACK_ENABLED": "false",
@@ -368,6 +477,7 @@ struct ProvisioningCheck: Identifiable, Equatable {
 
     enum State: Equatable {
         case checking
+        case waiting(String)
         case unverified(String)
         case ready(String)
         case missing(String)
@@ -375,6 +485,11 @@ struct ProvisioningCheck: Identifiable, Equatable {
 
         var isReady: Bool {
             if case .ready = self { return true }
+            return false
+        }
+
+        var isMissing: Bool {
+            if case .missing = self { return true }
             return false
         }
     }
@@ -397,6 +512,52 @@ nonisolated private final class CommandCompletion: @unchecked Sendable {
         guard !isFinished else { return false }
         isFinished = true
         return true
+    }
+}
+
+private struct HomebrewRelease: Decodable {
+    let assets: [HomebrewReleaseAsset]
+}
+
+private struct HomebrewReleaseAsset: Decodable {
+    let name: String
+    let browserDownloadURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadURL = "browser_download_url"
+    }
+}
+
+private enum HomebrewProvisioningError: LocalizedError {
+    case invalidReleaseAPI
+    case releaseAPI(status: Int)
+    case assetNotFound
+    case invalidDownloadURL
+    case packageDownload(status: Int)
+    case insecurePackageDownload
+    case emptyPackage
+    case couldNotOpenInstaller
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidReleaseAPI:
+            return "The official Homebrew release API URL was invalid."
+        case let .releaseAPI(status):
+            return "The official Homebrew release API returned HTTP status \(status)."
+        case .assetNotFound:
+            return "The latest official Homebrew release did not contain the exact Homebrew.pkg asset."
+        case .invalidDownloadURL:
+            return "The release asset did not provide a valid official HTTPS Homebrew download URL."
+        case let .packageDownload(status):
+            return "The official Homebrew package download returned HTTP status \(status)."
+        case .insecurePackageDownload:
+            return "The final Homebrew package response was not HTTPS."
+        case .emptyPackage:
+            return "The downloaded Homebrew.pkg was empty."
+        case .couldNotOpenInstaller:
+            return "macOS could not open Homebrew.pkg through Launch Services."
+        }
     }
 }
 
