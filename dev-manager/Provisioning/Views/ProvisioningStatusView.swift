@@ -2,7 +2,27 @@
 import SwiftUI
 
 struct ProvisioningStatusView: View {
+    private enum Layout {
+        static let rowMinimumHeight: CGFloat = 32
+        static let rowVerticalPadding: CGFloat = 10
+        static let groupHeadingBottomPadding: CGFloat = 2
+        static let actionColumnMinimumWidth: CGFloat = 116
+        static let nodeIndent: CGFloat = 26
+        static let statusIconWidth: CGFloat = 18
+        static let itemSpacing: CGFloat = 10
+
+        static var nodeChildDividerLeadingInset: CGFloat {
+            nodeIndent + statusIconWidth + itemSpacing
+        }
+    }
+
     @ObservedObject var model: ProvisioningModel
+    let onRequestConsent: (ProvisioningConsent) -> Void
+
+    init(model: ProvisioningModel, onRequestConsent: @escaping (ProvisioningConsent) -> Void = { _ in }) {
+        self.model = model
+        self.onRequestConsent = onRequestConsent
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -12,29 +32,98 @@ struct ProvisioningStatusView: View {
                 noticeView(.error("Machine-changing setup is disabled: \(issue)"))
             }
 
-            statusRow(for: .developerTools)
-            Divider()
-            statusRow(for: .homebrew)
-            Divider()
-            nodeEnvironment
+            VStack(alignment: .leading, spacing: 0) {
+                statusRow(for: .developerTools)
+                fullWidthDivider
+                statusRow(for: .homebrew)
+                fullWidthDivider
+                nodeEnvironment
+
+                if model.allRuntimeToolsReady {
+                    fullWidthDivider
+                    optionalShellRow
+                }
+            }
+
+            if !model.installationOutput.isEmpty {
+                diagnosticOutput(model.installationOutput)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 2)
     }
 
     private var nodeEnvironment: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             statusRow(
                 title: "Node environment",
                 state: runtimeEnvironmentState,
                 detail: runtimeEnvironmentDetail,
-                showInfo: false
+                showInfo: false,
+                bottomPadding: Layout.groupHeadingBottomPadding
             )
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 0) {
                 statusRow(for: .fnm, indented: true)
+                nodeChildDivider
                 statusRow(for: .node, indented: true)
+                nodeChildDivider
                 statusRow(for: .pnpm, indented: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var fullWidthDivider: some View {
+        Divider()
+            .frame(maxWidth: .infinity)
+    }
+
+    private var nodeChildDivider: some View {
+        Divider()
+            .padding(.leading, Layout.nodeChildDividerLeadingInset)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var optionalShellRow: some View {
+        let inspection = model.shellInspection
+        let (stateLabel, detail, isConfigured, isConflict) = shellPresentation(inspection)
+        return rowLayout(
+            leadingStatus: {
+                Image(systemName: isConflict ? "exclamationmark.triangle.fill" : (isConfigured ? "checkmark.circle.fill" : "circle.dashed"))
+                    .foregroundStyle(isConflict ? Color.orange : (isConfigured ? Color.green : Color.secondary))
+                    .accessibilityLabel(isConflict ? "Needs attention" : (isConfigured ? "Ready" : "Optional and not configured"))
+            },
+            titleInfo: {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("Optional shell configuration")
+                        .fontWeight(.medium)
+                    ProvisioningInfoButton(title: "Optional shell configuration", detail: detail)
+                }
+            },
+            details: {
+                Text(stateLabel)
+                    .font(.callout)
+                    .foregroundStyle(isConflict ? Color.orange : Color.secondary)
+                    .textSelection(.enabled)
+            },
+            trailingAction: {
+                if case .notConfigured = inspection, model.canConfigureShell {
+                    Button("Configure") {
+                        onRequestConsent(.configureShell)
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
+                    .help("Optionally add the app-owned fnm block to ~/.zshrc. This is not required for the fixture.")
+                }
+            }
+        )
+    }
+
+    private func shellPresentation(_ inspection: ProvisioningShellConfiguration.Inspection) -> (String, String, Bool, Bool) {
+        switch inspection {
+        case let .configured(message): return ("Configured", message, true, false)
+        case let .notConfigured(message): return ("Not configured (optional)", message, false, false)
+        case let .conflict(message): return ("Needs attention", message, false, true)
         }
     }
 
@@ -52,24 +141,29 @@ struct ProvisioningStatusView: View {
     @ViewBuilder
     private func statusRow(for id: ProvisioningCheck.ID, indented: Bool = false) -> some View {
         if let check = model.checks.first(where: { $0.id == id }) {
-            statusRow(title: id.title, state: check.state, detail: detail(for: check.state), indented: indented)
+            statusRow(title: id.title, state: check.state, detail: detail(for: check.state), id: id, indented: indented)
         }
     }
 
+    @ViewBuilder
     private func statusRow(
         title: String,
         state: ProvisioningCheck.State,
         detail: String,
+        id: ProvisioningCheck.ID? = nil,
         indented: Bool = false,
-        showInfo: Bool = true
+        showInfo: Bool = true,
+        bottomPadding: CGFloat? = nil
     ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            statusIcon(for: state)
-                .foregroundStyle(color(for: state))
-                .frame(width: 18, height: 18)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(accessibilityLabel(for: state))
-            VStack(alignment: .leading, spacing: 2) {
+        let action = id.map { model.rowAction(for: $0) }
+        rowLayout(
+            leadingStatus: {
+                statusIcon(for: state)
+                    .foregroundStyle(color(for: state))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accessibilityLabel(for: state))
+            },
+            titleInfo: {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(title)
                         .fontWeight(.medium)
@@ -77,25 +171,96 @@ struct ProvisioningStatusView: View {
                         ProvisioningInfoButton(title: title, detail: detail)
                     }
                 }
+            },
+            details: {
                 if isActionable(state) {
                     Text(detail)
                         .font(.callout)
                         .foregroundStyle(Color.orange)
                         .textSelection(.enabled)
                 }
+            },
+            trailingAction: {
+                if let id, let action {
+                    rowAction(action, for: id)
+                }
+            },
+            leadingInset: indented ? Layout.nodeIndent : 0,
+            bottomPadding: bottomPadding
+        )
+    }
+
+    @ViewBuilder
+    private func rowLayout<LeadingStatus: View, TitleInfo: View, Details: View, TrailingAction: View>(
+        @ViewBuilder leadingStatus: () -> LeadingStatus,
+        @ViewBuilder titleInfo: () -> TitleInfo,
+        @ViewBuilder details: () -> Details,
+        @ViewBuilder trailingAction: () -> TrailingAction,
+        leadingInset: CGFloat = 0,
+        bottomPadding: CGFloat? = nil
+    ) -> some View {
+        HStack(alignment: .center, spacing: Layout.itemSpacing) {
+            HStack(alignment: .center, spacing: Layout.itemSpacing) {
+                leadingStatus()
+                    .frame(width: Layout.statusIconWidth, height: Layout.statusIconWidth)
+                VStack(alignment: .leading, spacing: 2) {
+                    titleInfo()
+                    details()
+                }
             }
+            .padding(.leading, leadingInset)
             Spacer(minLength: 4)
+            trailingAction()
         }
-        .padding(.leading, indented ? 26 : 0)
+        .frame(maxWidth: .infinity, minHeight: Layout.rowMinimumHeight, alignment: .center)
+        .padding(.top, Layout.rowVerticalPadding)
+        .padding(.bottom, bottomPadding ?? Layout.rowVerticalPadding)
+    }
+
+    @ViewBuilder
+    private func rowAction(_ action: ProvisioningModel.ToolRowAction, for id: ProvisioningCheck.ID) -> some View {
+        switch action {
+        case .none:
+            EmptyView()
+        case let .progress(label):
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(label)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
+            .accessibilityLabel(label)
+        case let .install(label, reason, enabled):
+            Button(label) {
+                onRequestConsent(.tool(id))
+            }
+            .buttonStyle(.bordered)
+            .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
+            .disabled(!enabled)
+            .help(reason)
+            .accessibilityHint(reason)
+        case let .check(label, reason, enabled):
+            Button(label) {
+                Task { await model.checkAgain() }
+            }
+            .buttonStyle(.bordered)
+            .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
+            .disabled(!enabled)
+            .help(reason)
+            .accessibilityHint(reason)
+        }
     }
 
     private var runtimeEnvironmentState: ProvisioningCheck.State {
         let states = [checkState(for: .fnm), checkState(for: .node), checkState(for: .pnpm)]
         if states.allSatisfy(\.isReady) { return .ready("All three components are ready.") }
-        if states.contains(where: isStateAttention) { return .attention("One or more components needs attention.") }
+        if states.contains(where: isActionable) { return .attention("One or more components needs attention.") }
         if states.contains(where: isStateChecking) { return .checking }
         if states.contains(where: isStateWaiting) { return .waiting("Waiting for a prerequisite check.") }
-        if states.contains(where: isStateMissing) { return .missing("Install the missing components to run projects.") }
+        if states.contains(where: isStateMissing) { return .missing("Install each missing component after its prerequisite is ready.") }
         return .unverified("Verify all three components before running projects.")
     }
 
@@ -118,11 +283,6 @@ struct ProvisioningStatusView: View {
     }
 
     private func isActionable(_ state: ProvisioningCheck.State) -> Bool {
-        if case .attention = state { return true }
-        return false
-    }
-
-    private func isStateAttention(_ state: ProvisioningCheck.State) -> Bool {
         if case .attention = state { return true }
         return false
     }
@@ -182,6 +342,21 @@ struct ProvisioningStatusView: View {
         case .checking, .waiting, .unverified, .missing: return .secondary
         case .ready: return .green
         case .attention: return .orange
+        }
+    }
+
+    private func diagnosticOutput(_ output: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Installation output")
+                .font(.callout.weight(.medium))
+            ScrollView {
+                Text(output)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 140)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
         }
     }
 }

@@ -24,20 +24,21 @@ struct AdvancedProvisioningSheet: View {
                     } label: {
                         Label("Check again", systemImage: "arrow.clockwise")
                     }
-                    .disabled(model.isChecking || model.isRequestingCommandLineTools || model.isDownloadingHomebrew || model.isInstallingRuntime || model.isConfiguringShell || model.isVerifyingShell || model.isRestoringShell)
+                    .disabled(model.isBusy)
 
                     Button {
-                        onRequestConsent(.runtime)
+                        onRequestConsent(.prepareFixture)
                     } label: {
-                        Label("Install runtime / prepare fixture", systemImage: "shippingbox.and.arrow.down")
+                        Label("Prepare fixture project", systemImage: "shippingbox")
                     }
-                    .disabled(!model.canInstallRuntime)
+                    .disabled(!model.canPrepareFixture)
+                    .help("Prepare the owned fixture only after fnm, Node, and pnpm are ready. No tools are installed by this action.")
 
                     if model.fixtureURL != nil, model.fixtureCommand != nil {
                         Button("Show fixture project", systemImage: "folder") {
                             onShowFixture()
                         }
-                        .disabled(model.isInstallingRuntime)
+                        .disabled(model.isBusy)
                     }
 
                     GroupBox("Optional future interactive Zsh sessions") {

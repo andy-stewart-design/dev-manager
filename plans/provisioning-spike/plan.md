@@ -54,7 +54,7 @@ Unsigned builds establish compilation, not VM launchability. Prepare the tester-
 | Phase | Outcome | Dependencies | Exit gate |
 | --- | --- | --- | --- |
 | 1 | Development-only setup can detect prerequisites and hand off to Apple's graphical installers. | User-provided VM and approvals. | Clean VM completes developer-tool/Homebrew setup; cancellation and recheck behave correctly. |
-| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards; the final provisioning source tree and shared command collection are focused without behavior changes. | Phase 1 exit gate. | Steps 2.1, 2.2, bounded 2.3 presentation, bounded 2.4 architecture, and bounded 2.5 runner follow-up are verified; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
+| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards; the final provisioning source tree and shared command collection are focused without behavior changes; the approved per-tool presentation is recorded as the current UI contract. | Phase 1 exit gate. | Steps 2.1, 2.2, bounded 2.3 presentation, bounded 2.4 architecture, bounded 2.5 runner follow-up, and bounded 2.6 per-tool UI are verified; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
 
 Delivery boundary: one feature-complete spike change for review; no publication or production rollout. Each step is a bounded review/revert unit. No separate atomic migration group is needed; each step remains buildable with its prerequisites.
 
@@ -278,7 +278,38 @@ Verification:
 Completion gate: implementation tasks may be recorded here, but Step 2.5, AC11, and the final integration gate remain unchecked until the user reports the named tests and required manual gates.
 Evidence location: [evidence/step-2.5.md](evidence/step-2.5.md).
 
-Phase exit gate: after the final Step 2.5 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC11 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final Step 2.5 verification (all prior Step 2.2, Step 2.3, and Step 2.4 gates remain required), then seek the user's review rather than proceeding to rollout.
+### Step 2.6 — Approved per-tool provisioning presentation
+
+Requirements / acceptance: R12, AC12; preserves R1–R11 and AC1–AC11.
+Depends on: the Step 2.5 source architecture and the user's explicit approval of the per-tool proposal. This dependency does not imply that any build, test, VM, Release, ordinary-project, or final integration gate passed.
+Review boundary: three existing provisioning views plus the coordinating model and bounded plan/evidence documentation. No new installer, runner, fixture, shell parser, test framework, protocol, or dependency is authorized.
+
+Expected files:
+
+- `dev-manager/Provisioning/ProvisioningModel.swift` — per-tool row-action derivation, active-tool mutual exclusion, targeted reinspection, dedicated single-tool runtime installation, and separate fixture preparation.
+- `dev-manager/Provisioning/Views/ProvisioningView.swift` — remove the superseded footer action and route one targeted consent type plus fixture/shell consent callbacks.
+- `dev-manager/Provisioning/Views/ProvisioningStatusView.swift` — row-local Install/Check installation/Check again/progress actions, prerequisite explanations, optional shell row, and visible diagnostics.
+- `dev-manager/Provisioning/Views/ProvisioningAdvancedView.swift` — retain Advanced recovery/output controls while making fixture preparation separate from tool installation.
+- `plans/provisioning-spike/spec.md`, `plans/provisioning-spike/overview.md`, `plans/provisioning-spike/plan.md`, `plans/provisioning-spike/evidence/changes.md`, and `plans/provisioning-spike/evidence/step-2.6.md` — record the accepted R12 contract and source-only status.
+- No test file is changed; existing test seams remain untouched.
+
+Tasks:
+
+- [x] Replace the single footer action with mutually exclusive per-tool row actions for Apple developer tools, Homebrew, fnm, Node, and pnpm; preserve compact header/group/info/status presentation and remove the footer divider.
+- [x] Enforce the prerequisite chain and targeted one-tool consent. Reinspect before machine-changing work, reuse a tool that became ready externally, refuse attention/conflict states, preserve external handoff latches, and retain the active target through allowed installation checks.
+- [x] Separate dedicated runtime installation from fixture materialization. Each runtime action invokes only its existing command; Advanced preparation only materializes the owned fixture after all runtime tools are ready.
+- [x] Keep optional shell configuration as a non-blocking row after the Node group; retain fresh-shell, Restore, output, and fixture handoff controls in Advanced.
+- [ ] Complete the source-only verification note. User Debug build, manual clean-VM walkthrough, individual-only install, external waiting, all-ready, ordinary-project, shell/fixture regression, Release, existing tests, and final integration gates remain pending.
+
+Verification:
+
+- Source-only authoring: inspect the three views/model and `git diff --check`; do not build, test, parse, launch, install, download, or run the app.
+- User-owned pending gate: manually exercise missing prerequisites, one-tool installs, external waiting/recheck, active-operation disabling, attention refusal, all-ready fixture preparation, optional shell controls, and existing regression/final criteria. No result is inferred here.
+
+Completion gate: the implementation tasks above are recorded as completed by source inspection; Step 2.6, AC12, and the final integration gate remain unchecked until the user reports the required checks.
+Evidence location: [evidence/step-2.6.md](evidence/step-2.6.md).
+
+Phase exit gate: after the final Step 2.6 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC12 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final Step 2.6 verification (all prior Step 2.2, Step 2.3, Step 2.4, and Step 2.5 gates remain required), then seek the user's review rather than proceeding to rollout.
 
 ## Final acceptance
 
@@ -292,9 +323,10 @@ Phase exit gate: after the final Step 2.5 verification, run the existing regress
 | AC6 | 2.2 | Opt-in configuration works in a fresh Zsh; repeat/restore preserve unrelated content. | `evidence/step-2.2.md` |
 | AC7 | 1.1 guards; Phase 2 gate | Release compilation/source gating plus ordinary-project manual launch prove isolation. | `evidence/step-2.2.md` |
 | AC8 | 2.2; Phase 2 gate | Concise findings reflect observations and explicitly identify unrun cases. | `findings.md`, `evidence/step-2.2.md` |
-| AC9 | 2.3; final Phase 2 gate | One current-check-derived primary setup action, explicit external waiting, grouped runtime status, accessible close, and title-context-menu Advanced spike tools on a separate secondary surface; optional unconfigured shell state may offer Configure shell — optional, while configured/conflicting shell state remains Done; no shell prerequisite or guard bypass. | `evidence/step-2.3.md` and final acceptance review |
+| AC9 | 2.3; historical; superseded by 2.6/AC12 | The earlier compact presentation's one-footer-action rationale, explicit external waiting, grouped runtime status, accessible close, title-context-menu Advanced tools, and optional shell boundary. | R12/AC12 is the current accepted UI contract; `evidence/step-2.3.md` remains historical and the prior verification/final gate is not fabricated. |
 | AC10 | 2.4; final Phase 2 gate | Focused `Provisioning/` source tree and `Views/` subfolder, thin coordinating model, concrete helpers, one coherent configuration namespace, preserved DEBUG/public handoff and safety boundaries, and no unrelated runner/store/environment changes. | `evidence/step-2.4.md` and final acceptance review |
 | AC11 | 2.5; final Phase 2 gate | Shared `ProvisioningProcessResult` and bounded POSIX-spawn collection for checks/installers; concurrent large-output drain, deadline-enforced same-group descendant cleanup, leader reap, partial timeout diagnostics, explicit check/install policies, and focused regression cases. Detached process trees remain outside this scoped guarantee. | `evidence/step-2.5.md` and final acceptance review |
+| AC12 | 2.6; final Phase 2 gate | Per-tool current-state actions for the five in-scope tools, targeted consent, prerequisite guards, external handoff recheck, active-operation exclusion, separate fixture preparation, visible diagnostics, and non-blocking optional shell row. | `evidence/step-2.6.md` and final acceptance review |
 
 No live workflow, build, test, installation, or VM acceptance has been run merely by authoring this plan.
 
