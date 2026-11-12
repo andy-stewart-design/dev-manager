@@ -1,4 +1,5 @@
 #if DEBUG
+import AppKit
 import SwiftUI
 
 struct AdvancedProvisioningSheet: View {
@@ -83,11 +84,27 @@ struct AdvancedProvisioningSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    if !model.installationOutput.isEmpty {
-                        DisclosureGroup("Installation output") {
-                            outputView(model.installationOutput)
-                                .padding(.top, 4)
+                    if let warning = model.installationLogWarning {
+                        Label {
+                            Text(warning)
+                                .textSelection(.enabled)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
                         }
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    }
+
+                    if let failureLogURL = model.installationFailureLogURL {
+                        Button("Reveal failed installation log", systemImage: "doc.text.magnifyingglass") {
+                            revealLog(failureLogURL)
+                        }
+                        .help("Reveal the log written for the latest runtime installation failure.")
+                    } else if let logURL = model.installationLogURL {
+                        Button("Reveal installation log", systemImage: "doc.text.magnifyingglass") {
+                            revealLog(logURL)
+                        }
+                        .help("Reveal the app-owned provisioning installation log.")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -95,6 +112,11 @@ struct AdvancedProvisioningSheet: View {
         }
         .padding(20)
         .frame(minWidth: 560, idealWidth: 650, minHeight: 400, idealHeight: 500)
+    }
+
+    private func revealLog(_ url: URL) {
+        guard ProvisioningInstallationLog.existingLogURL() == url else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     private func outputView(_ output: String) -> some View {

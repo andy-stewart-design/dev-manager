@@ -45,10 +45,6 @@ struct ProvisioningStatusView: View {
                     optionalShellRow
                 }
             }
-
-            if !model.installationOutput.isEmpty {
-                diagnosticOutput(model.installationOutput)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -87,7 +83,7 @@ struct ProvisioningStatusView: View {
 
     private var optionalShellRow: some View {
         let inspection = model.shellInspection
-        let (stateLabel, detail, isConfigured, isConflict) = shellPresentation(inspection)
+        let (detail, isConfigured, isConflict) = shellPresentation(inspection)
         return rowLayout(
             leadingStatus: {
                 Image(systemName: isConflict ? "exclamationmark.triangle.fill" : (isConfigured ? "checkmark.circle.fill" : "circle.dashed"))
@@ -102,10 +98,7 @@ struct ProvisioningStatusView: View {
                 }
             },
             details: {
-                Text(stateLabel)
-                    .font(.callout)
-                    .foregroundStyle(isConflict ? Color.orange : Color.secondary)
-                    .textSelection(.enabled)
+                EmptyView()
             },
             trailingAction: {
                 if case .notConfigured = inspection, model.canConfigureShell {
@@ -120,11 +113,11 @@ struct ProvisioningStatusView: View {
         )
     }
 
-    private func shellPresentation(_ inspection: ProvisioningShellConfiguration.Inspection) -> (String, String, Bool, Bool) {
+    private func shellPresentation(_ inspection: ProvisioningShellConfiguration.Inspection) -> (detail: String, isConfigured: Bool, isConflict: Bool) {
         switch inspection {
-        case let .configured(message): return ("Configured", message, true, false)
-        case let .notConfigured(message): return ("Not configured (optional)", message, false, false)
-        case let .conflict(message): return ("Needs attention", message, false, true)
+        case let .configured(message): return (message, true, false)
+        case let .notConfigured(message): return (message, false, false)
+        case let .conflict(message): return (message, false, true)
         }
     }
 
@@ -346,20 +339,6 @@ struct ProvisioningStatusView: View {
         }
     }
 
-    private func diagnosticOutput(_ output: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Installation output")
-                .font(.callout.weight(.medium))
-            ScrollView {
-                Text(output)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 140)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
-        }
-    }
 }
 
 struct ProvisioningInfoButton: View {

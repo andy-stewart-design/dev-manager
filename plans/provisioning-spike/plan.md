@@ -54,7 +54,7 @@ Unsigned builds establish compilation, not VM launchability. Prepare the tester-
 | Phase | Outcome | Dependencies | Exit gate |
 | --- | --- | --- | --- |
 | 1 | Development-only setup can detect prerequisites and hand off to Apple's graphical installers. | User-provided VM and approvals. | Clean VM completes developer-tool/Homebrew setup; cancellation and recheck behave correctly. |
-| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards; the final provisioning source tree and shared command collection are focused without behavior changes; the approved per-tool presentation is recorded as the current UI contract. | Phase 1 exit gate. | Steps 2.1, 2.2, bounded 2.3 presentation, bounded 2.4 architecture, bounded 2.5 runner follow-up, and bounded 2.6 per-tool UI are verified; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
+| 2 | A pinned runtime runs the fixture without shell edits; optional shell configuration is reversible; the DEBUG setup presentation is simplified without changing provisioning guards; the final provisioning source tree and shared command collection are focused without behavior changes; the approved per-tool presentation and final bounded diagnostics cleanup are recorded as the current UI contract. | Phase 1 exit gate. | Steps 2.1, 2.2, bounded 2.3 presentation, bounded 2.4 architecture, bounded 2.5 runner follow-up, bounded 2.6 per-tool UI, and bounded 2.7 cleanup are reviewed; fixture, repeat/relaunch, shell experiment, Release isolation, and existing regressions remain required. |
 
 Delivery boundary: one feature-complete spike change for review; no publication or production rollout. Each step is a bounded review/revert unit. No separate atomic migration group is needed; each step remains buildable with its prerequisites.
 
@@ -309,7 +309,36 @@ Verification:
 Completion gate: the implementation tasks above are recorded as completed by source inspection; Step 2.6, AC12, and the final integration gate remain unchecked until the user reports the required checks.
 Evidence location: [evidence/step-2.6.md](evidence/step-2.6.md).
 
-Phase exit gate: after the final Step 2.6 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC12 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final Step 2.6 verification (all prior Step 2.2, Step 2.3, Step 2.4, and Step 2.5 gates remain required), then seek the user's review rather than proceeding to rollout.
+### Step 2.7 — Persistent bounded installation diagnostics and quiet shell row
+
+Requirements / acceptance: R13, AC13; preserves R1–R12 and AC1–AC12.
+Depends on: Step 2.6 source architecture and the user's approved final cleanup request. This dependency does not imply that any build, test, VM, Release, ordinary-project, or final integration gate passed.
+Review boundary: one concrete installation-log helper plus the coordinating model and existing provisioning views/documentation. Remove only the inline runtime installation transcript and optional shell second-line label; preserve all manual UI spacing values, centered shared row, loading/recheck ownership, pins, backend commands, timeout policies, and safety boundaries.
+
+Expected files:
+
+- `dev-manager/Provisioning/ProvisioningInstallationLog.swift` — app-owned App Support log path, fixed installation record formatting, bounded append/rotation, regular-file/symlink safety, and private permissions.
+- `dev-manager/Provisioning/ProvisioningModel.swift` — record installation results through the concrete helper, expose validated log/failure URLs and non-fatal write warnings, and preserve original installation outcome/errors.
+- `dev-manager/Provisioning/Views/ProvisioningStatusView.swift` — remove inline installation output and the optional shell row's redundant second-line state label while retaining title/info/status/action behavior and all layout variables.
+- `dev-manager/Provisioning/Views/ProvisioningAdvancedView.swift` — provide discreet Reveal installation log/failure-log controls and keep fresh-shell verification output.
+- `plans/provisioning-spike/spec.md`, `plans/provisioning-spike/overview.md`, `plans/provisioning-spike/plan.md`, `plans/provisioning-spike/evidence/changes.md`, and `plans/provisioning-spike/evidence/step-2.7.md` — record stable R13/AC13, approved cleanup, source-only status, and pending gates.
+
+Tasks:
+
+- [x] Add one concrete DEBUG-only `ProvisioningInstallationLog` that writes only fixed labels, timestamps, exit/timeout status, and bounded returned stdout/stderr to `Application Support/Dev Manager/Logs/provisioning.log`, with one rotated previous file, safe app-owned path checks, and private file/directory modes. Do not add a logger framework, dependency, subprocess, or environment/credential capture.
+- [x] Remove `installationOutput` and all inline installation transcript views. Keep fresh-shell verification output in Advanced. Remove only the optional shell row's second-line Configured/Not configured/Needs attention text; retain its title, info icon, status icon, colors, Configure action, and error notices.
+- [x] Surface a validated existing log after relaunch, reveal the log from Advanced, and link the actual log written for the latest runtime install failure when available. A log-write failure is a visible diagnostic warning and never changes a successful installation into a failed result or hides the original failure.
+- [ ] Complete source-only review and record pending user verification; do not claim successful-install, failure-reference, relaunch, or rotation checks without the user's build/manual report.
+
+Verification:
+
+- Source-only authoring: inspect the helper, model, and views for fixed labels, no environment/credential logging, bounded output, 256 KiB cap plus one rotation, symlink/directory safety, 0600 files/0700 new Logs directory, no inline transcript, quiet shell row, preserved spacing/centered-row/loading/timeout/pin/backend contracts, and `git diff --check`. Do not build, test, parse, launch, install, download, or run the app.
+- User-owned pending verification: build the Debug artifact and manually complete one successful runtime installation, one runtime failure with its context link, one relaunch with a prior log discoverable in Advanced, and rotation/permission/path-safety checks. Verify log-write failure leaves the original install outcome/error intact. Existing Release, regression, VM, ordinary-project, and final integration gates remain pending.
+
+Completion gate: implementation tasks are recorded by source inspection only; Step 2.7, AC13, and the final integration gate remain unchecked until the user reports the named checks.
+Evidence location: [evidence/step-2.7.md](evidence/step-2.7.md).
+
+Phase exit gate: after the final Step 2.7 verification, run the existing regression suite and review the final acceptance mapping for AC1–AC13 against the recorded VM observations. Expected result: builds/tests pass without new regressions, all required manual outcomes are demonstrated, and findings identify actual limits. Classify any pre-existing failure separately; do not call a failed or skipped gate passing. Record this integration/final gate after the final Step 2.7 verification (all prior Step 2.2, Step 2.3, Step 2.4, Step 2.5, and Step 2.6 gates remain required), then seek the user's review rather than proceeding to rollout.
 
 ## Final acceptance
 
@@ -327,6 +356,7 @@ Phase exit gate: after the final Step 2.6 verification, run the existing regress
 | AC10 | 2.4; final Phase 2 gate | Focused `Provisioning/` source tree and `Views/` subfolder, thin coordinating model, concrete helpers, one coherent configuration namespace, preserved DEBUG/public handoff and safety boundaries, and no unrelated runner/store/environment changes. | `evidence/step-2.4.md` and final acceptance review |
 | AC11 | 2.5; final Phase 2 gate | Shared `ProvisioningProcessResult` and bounded POSIX-spawn collection for checks/installers; concurrent large-output drain, deadline-enforced same-group descendant cleanup, leader reap, partial timeout diagnostics, explicit check/install policies, and focused regression cases. Detached process trees remain outside this scoped guarantee. | `evidence/step-2.5.md` and final acceptance review |
 | AC12 | 2.6; final Phase 2 gate | Per-tool current-state actions for the five in-scope tools, targeted consent, prerequisite guards, external handoff recheck, active-operation exclusion, separate fixture preparation, visible diagnostics, and non-blocking optional shell row. | `evidence/step-2.6.md` and final acceptance review |
+| AC13 | 2.7; final Phase 2 gate | Persistent bounded runtime-install diagnostics, Advanced reveal/failure reference, safe private App Support storage, non-fatal log-write failure handling, no inline transcript, and the quiet optional shell row. | `evidence/step-2.7.md` and final acceptance review |
 
 No live workflow, build, test, installation, or VM acceptance has been run merely by authoring this plan.
 

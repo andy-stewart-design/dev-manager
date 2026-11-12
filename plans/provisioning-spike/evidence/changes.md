@@ -44,6 +44,14 @@
 - **Bounded change:** refine only `ProvisioningStatusView` presentation and clarify the existing R12/AC12 wording; no new ID, phase, feature, provisioning state, workflow, or test harness.
 - **Verification status:** source inspection and `git diff --check` only; the user Debug build and manual layout review remain pending.
 
+## Approved final cleanup: persistent installation diagnostics and quiet shell row (Step 2.7 / R13)
+
+- **User-approved request:** “remove inline INSTALLATION OUTPUT from provisioning UI” and “remove optionalShellrowsecondline.” The request also references the current screenshot showing the npm transcript and the Optional Shell Configuration subtitle; this source-only pass records the requested cleanup without claiming a new screenshot or manual result.
+- **Approved behavior:** write runtime installation diagnostics best-effort to the app-owned `Application Support/Dev Manager/Logs/provisioning.log` path using one concrete helper. Records contain only the fixed command label, timestamp, exit/timeout status, and bounded returned stdout/stderr. Cap the current log at 256 KiB with one rotated previous file; refuse unsafe app-owned symlink/dangling/nondirectory paths and use private permissions. Advanced may reveal only a validated existing log and may expose the log actually written for the latest runtime installation failure.
+- **Preserved boundaries:** no logger framework, dependency, subprocess, environment dump, credential/password handling, host log writes, global process-runner changes, installation outcome changes, UI spacing-variable changes, centered shared row changes, loading/recheck ownership changes, timeout/pin/backend-command changes, fresh-shell Advanced output, or shell safety changes.
+- **Presentation cleanup:** remove the Published `installationOutput` state and all inline installation transcript scroll views. Keep fresh-shell verification output in Advanced. Remove only the optional shell row's second-line Configured/Not configured/Needs attention label while retaining title, info icon/detail, status icon/color, Configure action, and error notices.
+- **Verification status:** source inspection only. User Debug build, successful-install log existence, runtime-failure log reference, relaunch discovery, permissions/path safety, and rotation checks remain pending; all prior gates and the final Phase 2 gate remain unchecked.
+
 ## Approved inspection loading and targeted recheck flow
 
 - **Actual user approval:** after the detailed flow, “cool.let'sdoit”.

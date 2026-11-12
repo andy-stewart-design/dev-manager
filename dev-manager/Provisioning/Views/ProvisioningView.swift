@@ -165,7 +165,7 @@ struct ProvisioningView: View {
         switch id {
         case .developerTools: return "Request Apple installer"
         case .homebrew: return "Download and open Homebrew.pkg"
-        default: return "Install \(id.title) only"
+        default: return "Install \(id.title)"
         }
     }
 

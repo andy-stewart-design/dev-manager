@@ -14,7 +14,7 @@ After demonstrating operation without shell edits, a separate opt-in experiment 
 
 ## Mental model
 
-The app coordinates setup and verifies the result. macOS owns privileged installer dialogs and authentication. Existing project execution remains separate: launching a project is not permission to install machine-wide tools. The implementation is organized under [`dev-manager/Provisioning/`](../../dev-manager/Provisioning/) with UI in [`Views/`](../../dev-manager/Provisioning/Views/): the model coordinates concrete inspection, installer, runtime, fixture, command, and shell-safety components without changing the existing runner.
+The app coordinates setup and verifies the result. macOS owns privileged installer dialogs and authentication. Existing project execution remains separate: launching a project is not permission to install machine-wide tools. The implementation is organized under [`dev-manager/Provisioning/`](../../dev-manager/Provisioning/) with UI in [`Views/`](../../dev-manager/Provisioning/Views/): the model coordinates concrete inspection, installer, runtime, fixture, command, shell-safety, and bounded installation-log components without changing the existing runner. Runtime installation diagnostics are discoverable from Advanced rather than shown as an inline transcript.
 
 ## Scope and non-goals
 
@@ -26,3 +26,4 @@ The app coordinates setup and verifies the result. macOS owns privileged install
 - Specification: [spec.md](spec.md)
 - Implementation plan: [plan.md](plan.md)
 - Architecture evidence: [step-2.4.md](evidence/step-2.4.md)
+- Final cleanup evidence: [step-2.7.md](evidence/step-2.7.md)

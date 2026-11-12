@@ -13,7 +13,9 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var isRequestingCommandLineTools = false
     @Published private(set) var isDownloadingHomebrew = false
     @Published private(set) var isInstallingRuntime = false
-    @Published private(set) var installationOutput = ""
+    @Published private(set) var installationLogURL: URL? = ProvisioningInstallationLog.existingLogURL()
+    @Published private(set) var installationFailureLogURL: URL?
+    @Published private(set) var installationLogWarning: String?
     @Published private(set) var fixtureURL: URL?
     @Published private(set) var fixtureCommand: String?
 
@@ -405,7 +407,7 @@ final class ProvisioningModel: ObservableObject {
         activeToolID = id
         activeToolOperationID = operationID
         isInstallingRuntime = true
-        installationOutput = ""
+        installationFailureLogURL = nil
 
         // Reinspect while the target owns the operation. This prevents replacing a
         // tool that was installed outside the app after the row was displayed.
@@ -461,7 +463,12 @@ final class ProvisioningModel: ObservableObject {
                 showError("\(id.title) did not become usable after installation. No dependent tool was installed.")
             }
         } else {
-            showError("\(id.title) installation failed. Dependent tools were not started; review the visible output and Check again.")
+            let label = installationLabel(for: id)
+            var message = "\(id.title) installation failed: \(result.failureDescription(for: label, timeout: ProvisioningConfiguration.installTimeout)). Dependent tools were not started; review the installation log and Check again."
+            if let installationLogWarning {
+                message += " \(installationLogWarning)"
+            }
+            showError(message)
         }
         finishToolOperation(id, operationID: operationID)
     }
@@ -498,15 +505,20 @@ final class ProvisioningModel: ObservableObject {
     }
 
     private func recordInstallationResult(_ result: ProvisioningProcessResult, label: String) {
-        var text = "\(label) exited with status \(result.terminationStatus)."
-        if result.timedOut { text = "\(label) timed out after \(Int(ProvisioningConfiguration.installTimeout / 60)) minutes." }
-        if !result.stdout.isEmpty { text += "\nstdout:\n\(result.stdout)" }
-        if !result.stderr.isEmpty { text += "\nstderr:\n\(result.stderr)" }
-        installationOutput = String((installationOutput + "\n" + text).suffix(16_000))
+        switch ProvisioningInstallationLog.append(commandLabel: label, result: result) {
+        case let .wrote(url):
+            installationLogURL = url
+            installationLogWarning = nil
+            installationFailureLogURL = result.succeeded ? nil : url
+        case let .failed(detail):
+            installationLogWarning = "Installation diagnostics could not be written: \(detail)"
+            installationFailureLogURL = nil
+        }
     }
 
     func configureShell() throws {
         isShowingShellConfigurationConsent = false
+        installationFailureLogURL = nil
         guard canConfigureShell, let fnmExecutableURL else {
             throw ProvisioningShellConfiguration.ConfigurationError.unsupported("the supported environment and pinned fnm/Node/pnpm runtime are not ready")
         }
@@ -527,6 +539,7 @@ final class ProvisioningModel: ObservableObject {
 
     func verifyFreshShell() async {
         guard canVerifyShell else { return }
+        installationFailureLogURL = nil
         isVerifyingShell = true
         showProgress("Checking a fresh interactive Zsh…")
         defer { isVerifyingShell = false }
@@ -573,6 +586,7 @@ final class ProvisioningModel: ObservableObject {
 
     func restoreShell() throws {
         isShowingShellRestoreConsent = false
+        installationFailureLogURL = nil
         guard canRestoreShell else { return }
         isRestoringShell = true
         showProgress("Restoring the optional shell configuration…")
