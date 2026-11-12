@@ -13,10 +13,29 @@ nonisolated enum ProvisioningInspector {
             developerToolsExecutableURL: developerTools.executableURL,
             homebrew: homebrew.check,
             fnm: fnm.check,
-            fnmExecutableURL: fnm.executableURL,
+            fnmExecutableURL: runtimeContextURL(fnm: fnm, node: runtime.node),
             node: runtime.node,
             pnpm: runtime.pnpm
         )
+    }
+
+    nonisolated static func inspect(target id: ProvisioningCheck.ID) async -> ProvisioningTargetedInspection {
+        switch id {
+        case .developerTools:
+            let result = await checkDeveloperTools()
+            return ProvisioningTargetedInspection(checks: [result.check], fnmExecutableURL: nil)
+        case .homebrew:
+            let result = await checkHomebrew()
+            return ProvisioningTargetedInspection(checks: [result.check], fnmExecutableURL: nil)
+        case .fnm, .node, .pnpm:
+            // Runtime rows always refresh fnm and the combined Node/pnpm context.
+            let fnm = await checkFNM()
+            let runtime = await checkRuntime(using: fnm.executableURL)
+            return ProvisioningTargetedInspection(
+                checks: [fnm.check, runtime.node, runtime.pnpm],
+                fnmExecutableURL: runtimeContextURL(fnm: fnm, node: runtime.node)
+            )
+        }
     }
 
     private nonisolated static func checkDeveloperTools() async -> (check: ProvisioningCheck, executableURL: URL?) {
@@ -69,7 +88,7 @@ nonisolated enum ProvisioningInspector {
 
         let result = await ProvisioningCommandRunner.run(fnm, arguments: ["--version"])
         guard result.succeeded else {
-            return (ProvisioningCheck(id: .fnm, state: .attention("Found \(fnm.path), but it did not run as the current user: \(result.failureDescription(for: "fnm --version", timeout: ProvisioningConfiguration.commandTimeout))")), fnm)
+            return (ProvisioningCheck(id: .fnm, state: .attention("Found \(fnm.path), but it did not run as the current user: \(result.failureDescription(for: "fnm --version", timeout: ProvisioningConfiguration.commandTimeout))")), nil)
         }
         return (ProvisioningCheck(id: .fnm, state: .ready("\(result.stdout.firstNonEmptyLine ?? "fnm") at \(fnm.path)")), fnm)
     }
@@ -151,6 +170,15 @@ nonisolated enum ProvisioningInspector {
             ProvisioningCheck(id: .node, state: .ready("Node \(ProvisioningConfiguration.nodeVersion) through fnm")),
             ProvisioningCheck(id: .pnpm, state: .ready("pnpm \(ProvisioningConfiguration.pnpmVersion) through fnm's Node \(ProvisioningConfiguration.nodeVersion) context"))
         )
+    }
+
+    private nonisolated static func runtimeContextURL(
+        fnm: (check: ProvisioningCheck, executableURL: URL?),
+        node: ProvisioningCheck
+    ) -> URL? {
+        guard fnm.check.state.isReady, let executableURL = fnm.executableURL else { return nil }
+        if case .attention = node.state { return nil }
+        return executableURL
     }
 
     private nonisolated static func firstExecutable(candidates: [URL]) -> URL? {

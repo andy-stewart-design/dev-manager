@@ -45,11 +45,14 @@ final class ProvisioningModel: ObservableObject {
     @Published var isShowingShellRestoreConsent = false
 
     @Published private(set) var hasCompletedCheck = false
+    @Published private(set) var hasLoadedInitialInspection = false
     @Published private(set) var commandLineToolsRequestNeedsCheck = false
     @Published private(set) var homebrewHandoffNeedsCheck = false
     @Published private(set) var activeToolID: ProvisioningCheck.ID?
+    @Published private(set) var activeInspectionID: UUID?
+    @Published private(set) var activeInspectionTargetID: ProvisioningCheck.ID?
     @Published private(set) var shellInspection = ProvisioningShellConfiguration.Inspection.notConfigured("The optional fnm shell configuration has not been checked.")
-    private var checkGeneration = 0
+    private var activeToolOperationID: UUID?
     private var fnmExecutableURL: URL?
 
     var supportedEnvironmentIssue: String? { Self.environmentIssue }
@@ -60,8 +63,11 @@ final class ProvisioningModel: ObservableObject {
 
     var isSupportedEnvironment: Bool { supportedEnvironmentIssue == nil }
     var isBusy: Bool {
-        isChecking || isRequestingCommandLineTools || isDownloadingHomebrew || isInstallingRuntime ||
-            isConfiguringShell || isVerifyingShell || isRestoringShell
+        isChecking || activeInspectionID != nil || activeToolID != nil ||
+            isRequestingCommandLineTools || isDownloadingHomebrew || isInstallingRuntime ||
+            isConfiguringShell || isVerifyingShell || isRestoringShell ||
+            isShowingToolConsent || isShowingFixtureConsent ||
+            isShowingShellConfigurationConsent || isShowingShellRestoreConsent
     }
 
     enum ToolRowAction: Equatable {
@@ -106,7 +112,13 @@ final class ProvisioningModel: ObservableObject {
             if activeToolID == id { return .progress(progressLabel(for: id)) }
             return disabledAction(for: id)
         }
-        if isChecking { return .progress("Checking the current machine state…") }
+        if let target = activeInspectionTargetID {
+            if target == id { return .progress("Checking \(id.title)…") }
+            return disabledAction(for: id)
+        }
+        if isChecking || activeInspectionID != nil {
+            return disabledAction(for: id)
+        }
         if isBusy {
             return disabledAction(for: id)
         }
@@ -224,25 +236,31 @@ final class ProvisioningModel: ObservableObject {
     }
 
     func checkAgain(allowDuringInstallation: Bool = false) async {
-        guard !isChecking && !isRequestingCommandLineTools && !isDownloadingHomebrew &&
-                (allowDuringInstallation || !isInstallingRuntime) &&
-                !isConfiguringShell && !isVerifyingShell && !isRestoringShell else { return }
-        checkGeneration += 1
-        let generation = checkGeneration
-        hasCompletedCheck = false
+        guard activeInspectionID == nil, activeToolID == nil,
+              !isRequestingCommandLineTools, !isDownloadingHomebrew,
+              (allowDuringInstallation || !isInstallingRuntime),
+              !isConfiguringShell, !isVerifyingShell, !isRestoringShell else { return }
+
+        let operationID = UUID()
+        let isInitialInspection = !hasLoadedInitialInspection
+        activeInspectionID = operationID
+        activeInspectionTargetID = nil
         isChecking = true
+        if isInitialInspection {
+            hasCompletedCheck = false
+            checks = ProvisioningCheck.all
+        }
         showProgress("Inspecting installed tools…")
-        checks = ProvisioningCheck.all
 
         let inspection = await ProvisioningInspector.inspect()
-        guard generation == checkGeneration else {
-            isChecking = false
-            return
-        }
+        guard activeInspectionID == operationID else { return }
+
         fnmExecutableURL = inspection.fnmExecutableURL
         checks = [inspection.developerTools, inspection.homebrew, inspection.fnm, inspection.node, inspection.pnpm]
         isChecking = false
+        activeInspectionID = nil
         hasCompletedCheck = true
+        if isInitialInspection { hasLoadedInitialInspection = true }
         commandLineToolsRequestNeedsCheck = false
         homebrewHandoffNeedsCheck = false
         shellInspection = ProvisioningShellConfiguration.inspect()
@@ -254,15 +272,51 @@ final class ProvisioningModel: ObservableObject {
         }
     }
 
+    func checkTool(_ id: ProvisioningCheck.ID) async {
+        guard hasLoadedInitialInspection, activeInspectionID == nil, activeToolID == nil,
+              !isBusy, !isConfiguringShell, !isVerifyingShell, !isRestoringShell else { return }
+
+        let operationID = UUID()
+        activeInspectionID = operationID
+        activeInspectionTargetID = id
+        isChecking = true
+        showProgress("Checking \(id.title)…")
+
+        let inspection = await ProvisioningInspector.inspect(target: id)
+        guard activeInspectionID == operationID else { return }
+        apply(inspection, for: id)
+        if id == .developerTools { commandLineToolsRequestNeedsCheck = false }
+        if id == .homebrew { homebrewHandoffNeedsCheck = false }
+        isChecking = false
+        activeInspectionTargetID = nil
+        activeInspectionID = nil
+        clearMessage()
+    }
+
+    private func apply(_ inspection: ProvisioningTargetedInspection, for target: ProvisioningCheck.ID) {
+        let returned = Dictionary(uniqueKeysWithValues: inspection.checks.map { ($0.id, $0) })
+        checks = checks.map { returned[$0.id] ?? $0 }
+        if [.fnm, .node, .pnpm].contains(target) {
+            // A failed runtime context must not leave an old fnm URL eligible for writes.
+            fnmExecutableURL = inspection.fnmExecutableURL
+        }
+    }
+
     func requestCommandLineTools() async {
         guard canRequestCommandLineTools else { return }
-        await checkAgain()
-        guard canRequestCommandLineTools else {
+        let operationID = UUID()
+        activeToolID = .developerTools
+        activeToolOperationID = operationID
+        isRequestingCommandLineTools = true
+        guard await inspectTarget(.developerTools, operationID: operationID) else {
+            finishToolOperation(.developerTools, operationID: operationID)
+            return
+        }
+        guard state(for: .developerTools)?.isMissing == true else {
+            finishToolOperation(.developerTools, operationID: operationID)
             showError("Apple developer tools changed while setup was waiting; no installer was opened. Check installation again.")
             return
         }
-        activeToolID = .developerTools
-        isRequestingCommandLineTools = true
         commandLineToolsRequestNeedsCheck = true
         setDeveloperToolsState(.waiting("Apple's installer dialog was requested. Finish or cancel it, then press Check installation; opening the dialog is not completion."))
         showProgress("Requesting Apple's Command Line Tools installer dialog…")
@@ -271,11 +325,13 @@ final class ProvisioningModel: ObservableObject {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
         process.arguments = ["--install"]
         process.terminationHandler = { [weak self] process in
+            let status = process.terminationStatus
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.activeToolID == .developerTools,
+                      self.activeToolOperationID == operationID else { return }
                 self.isRequestingCommandLineTools = false
                 self.activeToolID = nil
-                let status = process.terminationStatus
+                self.activeToolOperationID = nil
                 if status == 0 {
                     self.clearMessage()
                 } else {
@@ -287,28 +343,35 @@ final class ProvisioningModel: ObservableObject {
         do {
             try process.run()
         } catch {
-            isRequestingCommandLineTools = false
-            activeToolID = nil
+            finishToolOperation(.developerTools, operationID: operationID)
             showError("Could not request Apple's Command Line Tools installer: \(error.localizedDescription)")
         }
     }
 
     func downloadAndOpenHomebrewPackage() async {
         guard canRequestHomebrew else { return }
-        await checkAgain()
-        guard canRequestHomebrew else {
+        let operationID = UUID()
+        activeToolID = .homebrew
+        activeToolOperationID = operationID
+        isDownloadingHomebrew = true
+        guard await inspectTarget(.homebrew, operationID: operationID) else {
+            finishToolOperation(.homebrew, operationID: operationID)
+            return
+        }
+        guard state(for: .homebrew)?.isMissing == true else {
+            finishToolOperation(.homebrew, operationID: operationID)
             showError("Homebrew changed while setup was waiting; no package was opened. Check installation again.")
             return
         }
-        activeToolID = .homebrew
-        isDownloadingHomebrew = true
         homebrewHandoffNeedsCheck = true
         setHomebrewState(.waiting("Preparing the official Homebrew.pkg; installation is not complete."))
         showProgress("Looking up the latest official Homebrew.pkg…")
 
         do {
             let packageURL = try await HomebrewPackageInstaller.downloadPackage { [weak self] in
-                self?.showProgress("Downloading Homebrew.pkg from Homebrew's official release…")
+                guard let self, self.activeToolID == .homebrew,
+                      self.activeToolOperationID == operationID else { return }
+                self.showProgress("Downloading Homebrew.pkg from Homebrew's official release…")
             }
             guard HomebrewPackageInstaller.openPackage(packageURL) else {
                 throw HomebrewProvisioningError.couldNotOpenInstaller
@@ -319,11 +382,13 @@ final class ProvisioningModel: ObservableObject {
             setHomebrewState(.attention("Homebrew handoff failed: \(error.localizedDescription)"))
             showError("Homebrew handoff failed: \(error.localizedDescription) Press Check installation before retrying.")
         }
-        isDownloadingHomebrew = false
-        activeToolID = nil
+        finishToolOperation(.homebrew, operationID: operationID)
     }
 
     func installTool(_ id: ProvisioningCheck.ID) async {
+        // The consent dialog owns this transition; release its UI lock before
+        // the existing eligibility guards run.
+        isShowingToolConsent = false
         switch id {
         case .developerTools:
             await requestCommandLineTools()
@@ -336,29 +401,36 @@ final class ProvisioningModel: ObservableObject {
 
     func installRuntimeTool(_ id: ProvisioningCheck.ID) async {
         guard [.fnm, .node, .pnpm].contains(id), canInstallRuntimeTool(id) else { return }
+        let operationID = UUID()
         activeToolID = id
+        activeToolOperationID = operationID
         isInstallingRuntime = true
         installationOutput = ""
-        defer {
-            isInstallingRuntime = false
-            activeToolID = nil
-        }
 
-        // Reinspect while the target remains active. This prevents replacing a tool
-        // that was installed outside the app after the row was displayed.
-        await checkAgain(allowDuringInstallation: true)
-        guard let targetState = state(for: id) else { return }
+        // Reinspect while the target owns the operation. This prevents replacing a
+        // tool that was installed outside the app after the row was displayed.
+        guard await inspectTarget(id, operationID: operationID) else {
+            finishToolOperation(id, operationID: operationID)
+            return
+        }
+        guard let targetState = state(for: id) else {
+            finishToolOperation(id, operationID: operationID)
+            return
+        }
         if targetState.isReady {
             showProgress("\(id.title) is already installed; no change was made.")
+            finishToolOperation(id, operationID: operationID)
             return
         }
         guard targetState.isMissing, runtimePrerequisitesReady(for: id) else {
             showError("\(id.title) needs attention or its prerequisites are not ready. No change was made; review the row and Check again.")
+            finishToolOperation(id, operationID: operationID)
             return
         }
         let fnm = fnmExecutableURL
         if id != .fnm, fnm == nil {
             showError("fnm is not usable, so Node and pnpm were not changed.")
+            finishToolOperation(id, operationID: operationID)
             return
         }
 
@@ -368,18 +440,20 @@ final class ProvisioningModel: ObservableObject {
             showProgress("Installing fnm through /opt/homebrew/bin/brew…")
             result = await ProvisioningRuntimeInstaller.installFNM()
         case .node:
-            guard let fnm else { return }
+            guard let fnm else { finishToolOperation(id, operationID: operationID); return }
             showProgress("Installing Node \(Self.nodeVersion) in fnm…")
             result = await ProvisioningRuntimeInstaller.installNode(using: fnm)
         case .pnpm:
-            guard let fnm else { return }
+            guard let fnm else { finishToolOperation(id, operationID: operationID); return }
             showProgress("Installing pnpm \(Self.pnpmVersion) inside Node \(Self.nodeVersion)…")
             result = await ProvisioningRuntimeInstaller.installPnpm(using: fnm)
         case .developerTools, .homebrew:
+            finishToolOperation(id, operationID: operationID)
             return
         }
+        guard activeToolID == id, activeToolOperationID == operationID else { return }
         recordInstallationResult(result, label: installationLabel(for: id))
-        await checkAgain(allowDuringInstallation: true)
+        guard await inspectTarget(id, operationID: operationID) else { return }
         if result.succeeded {
             if state(for: id)?.isReady == true {
                 clearMessage()
@@ -389,9 +463,11 @@ final class ProvisioningModel: ObservableObject {
         } else {
             showError("\(id.title) installation failed. Dependent tools were not started; review the visible output and Check again.")
         }
+        finishToolOperation(id, operationID: operationID)
     }
 
     func prepareFixture() throws {
+        isShowingFixtureConsent = false
         guard canPrepareFixture, let fnm = fnmExecutableURL else { return }
         showProgress("Preparing the fixture project…")
         do {
@@ -430,6 +506,7 @@ final class ProvisioningModel: ObservableObject {
     }
 
     func configureShell() throws {
+        isShowingShellConfigurationConsent = false
         guard canConfigureShell, let fnmExecutableURL else {
             throw ProvisioningShellConfiguration.ConfigurationError.unsupported("the supported environment and pinned fnm/Node/pnpm runtime are not ready")
         }
@@ -495,6 +572,7 @@ final class ProvisioningModel: ObservableObject {
     }
 
     func restoreShell() throws {
+        isShowingShellRestoreConsent = false
         guard canRestoreShell else { return }
         isRestoringShell = true
         showProgress("Restoring the optional shell configuration…")
@@ -509,6 +587,24 @@ final class ProvisioningModel: ObservableObject {
             showError(error.localizedDescription)
             throw error
         }
+    }
+
+    private func inspectTarget(_ id: ProvisioningCheck.ID, operationID: UUID) async -> Bool {
+        guard activeToolID == id, activeToolOperationID == operationID else { return false }
+        showProgress("Checking \(id.title)…")
+        let inspection = await ProvisioningInspector.inspect(target: id)
+        guard activeToolID == id, activeToolOperationID == operationID else { return false }
+        apply(inspection, for: id)
+        return true
+    }
+
+    private func finishToolOperation(_ id: ProvisioningCheck.ID, operationID: UUID) {
+        guard activeToolID == id, activeToolOperationID == operationID else { return }
+        isRequestingCommandLineTools = false
+        isDownloadingHomebrew = false
+        isInstallingRuntime = false
+        activeToolID = nil
+        activeToolOperationID = nil
     }
 
     private func setHomebrewState(_ state: ProvisioningCheck.State) {

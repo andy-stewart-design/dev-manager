@@ -19,6 +19,18 @@ struct AdvancedProvisioningSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    if let presentation = model.messagePresentation,
+                       presentation.isError || (model.activeInspectionID != nil && model.activeInspectionTargetID == nil && model.activeToolID == nil) {
+                        Label {
+                            Text(presentation.text)
+                                .textSelection(.enabled)
+                        } icon: {
+                            Image(systemName: presentation.isError ? "exclamationmark.triangle.fill" : "ellipsis.circle")
+                        }
+                        .font(.callout)
+                        .foregroundStyle(presentation.isError ? Color.orange : Color.secondary)
+                    }
+
                     Button {
                         Task { await model.checkAgain() }
                     } label: {

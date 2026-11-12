@@ -44,7 +44,7 @@ struct ProvisioningView: View {
             }
             .padding(.bottom, 12)
 
-            if model.checks.isEmpty || (model.isChecking && model.activeToolID == nil) {
+            if !model.hasLoadedInitialInspection {
                 VStack {
                     Spacer()
                     inspectionLoadingView

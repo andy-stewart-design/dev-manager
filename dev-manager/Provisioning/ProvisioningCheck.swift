@@ -64,6 +64,11 @@ nonisolated struct ProvisioningInspection: Sendable {
     let pnpm: ProvisioningCheck
 }
 
+nonisolated struct ProvisioningTargetedInspection: Sendable {
+    let checks: [ProvisioningCheck]
+    let fnmExecutableURL: URL?
+}
+
 extension String {
     nonisolated var firstNonEmptyLine: String? {
         split(whereSeparator: \.isNewline)

@@ -44,8 +44,9 @@
 - **Bounded change:** refine only `ProvisioningStatusView` presentation and clarify the existing R12/AC12 wording; no new ID, phase, feature, provisioning state, workflow, or test harness.
 - **Verification status:** source inspection and `git diff --check` only; the user Debug build and manual layout review remain pending.
 
-## Approved inspection loading simplification
+## Approved inspection loading and targeted recheck flow
 
-- **Actual user request:** during initial or manual inspection, replace the global notice plus five checking rows with one centered progress indicator and “Inspecting installed tools…” while preserving the normal header, intro, Advanced title menu, and close/Escape behavior.
-- **Bounded source change:** the existing main content boundary now swaps in one accessible loading view when `checks` is empty or `isChecking && activeToolID == nil`; the checklist `ScrollView` is not rendered behind it. Active-tool rechecks remain on the checklist so target-row installation progress is preserved, and the existing checks/errors/business logic is unchanged.
-- **Verification status:** source-only inspection and `git diff --check`; no build, test, parse, launch, install, download, VM, or host-shell action. User Debug build and manual review remain pending.
+- **Actual user approval:** after the detailed flow, “cool.let'sdoit”.
+- **Approved behavior:** only the first whole-machine inspection uses the centered full-sheet loader. Once its states arrive, the checklist remains visible forever for that sheet session. Advanced Check again retains the last statuses and may show one global progress notice; a row Check installation/Check again or an install pre/postflight owns progress only in its requested row. Errors remain visible.
+- **Bounded source change:** add independent `hasLoadedInitialInspection` and operation ownership IDs; add `ProvisioningInspector.inspect(target:)` for Apple-only, Homebrew-only, and fresh fnm-context runtime checks; patch only returned check IDs. Runtime targeted checks refresh related Node/pnpm state and clear unusable fnm context rather than reusing it blindly. No new stable IDs or phase are introduced.
+- **Verification status:** source-only inspection and `git diff --check`; targeted manual/debug walkthroughs remain pending. No build, test, parse, launch, install, download, VM, or host-shell action is claimed.

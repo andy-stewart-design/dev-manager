@@ -26,7 +26,8 @@ struct ProvisioningStatusView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let presentation = model.messagePresentation {
+            if let presentation = model.messagePresentation,
+               presentation.isError || (model.activeToolID == nil && model.activeInspectionID == nil) {
                 noticeView(presentation)
             } else if let issue = model.supportedEnvironmentIssue {
                 noticeView(.error("Machine-changing setup is disabled: \(issue)"))
@@ -244,7 +245,7 @@ struct ProvisioningStatusView: View {
             .accessibilityHint(reason)
         case let .check(label, reason, enabled):
             Button(label) {
-                Task { await model.checkAgain() }
+                Task { await model.checkTool(id) }
             }
             .buttonStyle(.bordered)
             .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
