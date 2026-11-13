@@ -209,7 +209,7 @@ nonisolated enum ProvisioningInspector {
         }
     }
 
-    private nonisolated struct PnpmObservation {
+    nonisolated struct PnpmObservation {
         let version: String?
         let executableURL: URL?
         let failure: String?
@@ -222,6 +222,10 @@ nonisolated enum ProvisioningInspector {
             self.failure = failure
             self.foundExecutable = foundExecutable
             self.budgetExhausted = budgetExhausted
+        }
+
+        nonisolated static var noCandidate: PnpmObservation {
+            PnpmObservation(version: nil, executableURL: nil, failure: nil, foundExecutable: false)
         }
     }
 
@@ -331,8 +335,6 @@ nonisolated enum ProvisioningInspector {
                 chosenFNMDirectoryURL: probe.root
             )
             let observation = await probePnpm(
-                using: fnmURL,
-                selector: selector,
                 root: probe.root,
                 selectedNodeURL: node.executableURL,
                 budget: budget
@@ -421,8 +423,6 @@ nonisolated enum ProvisioningInspector {
                     chosenFNMDirectoryURL: probe.root
                 )
                 let observation = await probePnpm(
-                    using: fnmURL,
-                    selector: selector,
                     root: probe.root,
                     selectedNodeURL: node.executableURL,
                     budget: budget
@@ -578,8 +578,6 @@ nonisolated enum ProvisioningInspector {
     }
 
     private nonisolated static func probePnpm(
-        using fnmURL: URL,
-        selector: String,
         root: URL,
         selectedNodeURL: URL,
         budget: RuntimeInspectionBudget
@@ -588,32 +586,14 @@ nonisolated enum ProvisioningInspector {
             basedOn: ProvisioningConfiguration.readOnlyRuntimeEnvironment,
             root: root
         )
-        guard let pathResult = await runtimeProbe(
-            fnmURL,
-            arguments: ["exec", "--using", selector, "/usr/bin/which", "pnpm"],
-            environment: environment,
-            budget: budget
-        ) else {
-            return PnpmObservation(version: nil, executableURL: nil, failure: "Runtime inspection budget exhausted.", foundExecutable: false, budgetExhausted: true)
-        }
-
-        // fnm's result is only a preferred candidate. A failed or stale `which`
-        // result must not prevent the known GUI/Homebrew and bounded PATH probes.
-        let prior: [URL] = pathResult.succeeded
-            ? (pathResult.stdout.firstNonEmptyLine
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .flatMap { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : nil }
-                .map { [$0] } ?? [])
-            : []
-        let discoveryFailure = pathResult.succeeded
-            ? nil
-            : pathResult.failureDescription(for: "fnm exec --using \(selector) which pnpm", timeout: ProvisioningConfiguration.commandTimeout)
+        // The shared absolute candidate list covers the selected Node bin,
+        // Homebrew, and the bounded inherited PATH. A missing lookup is simply
+        // no candidate; it is not evidence that pnpm was found and failed.
         return await probePnpmCandidates(
             selectedNodeURL: selectedNodeURL,
-            prior: prior,
+            prior: [],
             environment: environment,
-            budget: budget,
-            initialFailure: discoveryFailure
+            budget: budget
         )
     }
 
@@ -621,9 +601,18 @@ nonisolated enum ProvisioningInspector {
         selectedNodeURL: URL,
         prior: [URL],
         environment: [String: String],
-        budget: RuntimeInspectionBudget,
-        initialFailure: String? = nil
+        budget: RuntimeInspectionBudget
     ) async -> PnpmObservation {
+        guard budget.remainingTimeout != nil else {
+            return PnpmObservation(
+                version: nil,
+                executableURL: nil,
+                failure: "Runtime inspection budget exhausted.",
+                foundExecutable: false,
+                budgetExhausted: true
+            )
+        }
+
         let inheritedPATH = environment["PATH"] ?? ""
         let ordered = ProvisioningExecutablePaths.pnpmCandidates(
             prior: prior,
@@ -675,12 +664,7 @@ nonisolated enum ProvisioningInspector {
             }
             bestObservation = betterPnpmObservation(bestObservation, observation)
         }
-        return bestObservation ?? PnpmObservation(
-            version: nil,
-            executableURL: prior.first,
-            failure: initialFailure,
-            foundExecutable: initialFailure != nil || !prior.isEmpty
-        )
+        return bestObservation ?? PnpmObservation.noCandidate
     }
 
     private nonisolated static func betterPnpmObservation(_ current: PnpmObservation?, _ candidate: PnpmObservation) -> PnpmObservation? {
@@ -701,7 +685,7 @@ nonisolated enum ProvisioningInspector {
         return (node, pnpm, context)
     }
 
-    private nonisolated static func pnpmCheck(for context: ProvisioningRuntimeContext?, observed: PnpmObservation?) -> ProvisioningCheck {
+    nonisolated static func pnpmCheck(for context: ProvisioningRuntimeContext?, observed: PnpmObservation?) -> ProvisioningCheck {
         guard let observed else {
             return ProvisioningCheck(id: .pnpm, state: .missing("pnpm is not installed in the selected Node context. A new install targets pnpm \(ProvisioningRuntimePolicy.recommendedPnpmVersion); supported stable majors are 10, 11, and 12."))
         }

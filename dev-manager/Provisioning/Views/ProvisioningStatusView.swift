@@ -55,6 +55,7 @@ struct ProvisioningStatusView: View {
                 state: runtimeEnvironmentState,
                 detail: runtimeEnvironmentDetail,
                 showInfo: false,
+                showDetails: false,
                 bottomPadding: Layout.groupHeadingBottomPadding
             )
             VStack(alignment: .leading, spacing: 0) {
@@ -160,6 +161,7 @@ struct ProvisioningStatusView: View {
         id: ProvisioningCheck.ID? = nil,
         indented: Bool = false,
         showInfo: Bool = true,
+        showDetails: Bool = true,
         bottomPadding: CGFloat? = nil,
         version: String? = nil
     ) -> some View {
@@ -187,7 +189,7 @@ struct ProvisioningStatusView: View {
                 }
             },
             details: {
-                if isActionable(state) {
+                if showDetails && isActionable(state) {
                     Text(detail)
                         .font(.callout)
                         .foregroundStyle(Color.orange)

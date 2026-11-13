@@ -181,6 +181,81 @@ struct ProvisioningRuntimePolicyTests {
         #expect(paths.count == Set(paths).count)
     }
 
+    @Test("pnpm absence from an empty candidate set remains missing")
+    func emptyPnpmCandidateSetIsMissing() {
+        let observation = ProvisioningInspector.PnpmObservation.noCandidate
+        let check = ProvisioningInspector.pnpmCheck(for: nil, observed: observation)
+
+        #expect(observation.executableURL == nil)
+        #expect(observation.failure == nil)
+        #expect(!observation.foundExecutable)
+        if case .missing = check.state {
+            // Expected: an actually empty candidate set remains installable.
+        } else {
+            #expect(Bool(false), "An empty pnpm candidate set must be missing")
+        }
+    }
+
+    @Test("a real pnpm candidate failure stays attention with its concrete path")
+    func pnpmCandidateFailureRetainsPath() {
+        let path = URL(fileURLWithPath: "/opt/homebrew/bin/pnpm")
+        let observation = ProvisioningInspector.PnpmObservation(
+            version: nil,
+            executableURL: path,
+            failure: "exit 1",
+            foundExecutable: true
+        )
+        let check = ProvisioningInspector.pnpmCheck(for: nil, observed: observation)
+
+        if case let .attention(detail) = check.state {
+            #expect(detail.contains(path.path))
+            #expect(detail.contains("exit 1"))
+        } else {
+            #expect(Bool(false), "A failed real pnpm candidate must need attention")
+        }
+    }
+
+    @Test("an unknown pnpm probe caused by budget exhaustion is not missing")
+    func exhaustedPnpmProbeNeedsAttention() {
+        let observation = ProvisioningInspector.PnpmObservation(
+            version: nil,
+            executableURL: nil,
+            failure: "Runtime inspection budget exhausted.",
+            foundExecutable: false,
+            budgetExhausted: true
+        )
+        let check = ProvisioningInspector.pnpmCheck(for: nil, observed: observation)
+
+        if case .attention = check.state {
+            // Expected: an unknown result is not an installable absence.
+        } else {
+            #expect(Bool(false), "Budget exhaustion must need attention")
+        }
+    }
+
+    @Test("accepted Homebrew pnpm remains ready for selected Node 24.21")
+    func acceptedHomebrewPnpmRemainsReady() {
+        let context = ProvisioningRuntimeContext(
+            nodeVersion: "24.21.0",
+            nodeExecutableURL: URL(fileURLWithPath: "/Users/test/.local/share/fnm/node-versions/v24.21.0/installation/bin/node"),
+            pnpmVersion: nil,
+            pnpmExecutableURL: nil,
+            fnmExecutableURL: URL(fileURLWithPath: "/opt/homebrew/bin/fnm"),
+            fnmSelector: "24.21.0",
+            chosenFNMDirectoryURL: URL(fileURLWithPath: "/Users/test/.local/share/fnm", isDirectory: true)
+        )
+        let path = URL(fileURLWithPath: "/opt/homebrew/bin/pnpm")
+        let observation = ProvisioningInspector.PnpmObservation(
+            version: "12.6.0",
+            executableURL: path,
+            failure: nil,
+            foundExecutable: true
+        )
+        let check = ProvisioningInspector.pnpmCheck(for: context, observed: observation)
+
+        #expect(check.state == .ready("pnpm 12.6.0; path: /opt/homebrew/bin/pnpm; selected Node: 24.21.0"))
+    }
+
     @Test("ready labels retain actual detected versions")
     func actualVersionLabels() {
         #expect(ProvisioningCheck(id: .node, state: .ready("Node 24.21.0; path: /tmp/node")).rowTitle == "Node 24.21.0")
