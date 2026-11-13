@@ -46,6 +46,23 @@ nonisolated enum ProvisioningRuntimePolicy {
         isSupportedNodeVersion(nodeVersion) && isSupportedPnpmVersion(pnpmVersion)
     }
 
+    /// Accept only a concrete executable whose canonical target is inside fnm's
+    /// node-versions store. Canonicalization intentionally accepts aliases such
+    /// as `aliases/default` when they resolve into that store, while system,
+    /// outside-store, and prefix-collision paths are rejected.
+    nonisolated static func isManagedNodeExecutable(_ executable: URL, within root: URL) -> Bool {
+        let rootComponents = root.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        let executableComponents = executable.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        guard executableComponents.count == rootComponents.count + 5,
+              Array(executableComponents.prefix(rootComponents.count)) == rootComponents else { return false }
+        let relative = Array(executableComponents.dropFirst(rootComponents.count))
+        guard relative[0] == "node-versions",
+              relative[1].hasPrefix("v"),
+              normalizedVersion(String(relative[1].dropFirst())) != nil,
+              relative[2] == "installation" else { return false }
+        return relative[3] == "bin" && relative[4] == "node"
+    }
+
     nonisolated static func major(of version: String) -> Int? {
         let value = version.trimmingCharacters(in: .whitespacesAndNewlines)
         let withoutPrefix = value.hasPrefix("v") ? String(value.dropFirst()) : value
@@ -110,17 +127,17 @@ nonisolated struct ProvisioningRuntimeContext: Equatable, Sendable {
     let fnmExecutableURL: URL?
     let fnmSelector: String?
     /// The exact fnm data root used for every probe and subsequent operation.
-    /// This remains optional for unmanaged GUI Node contexts.
-    let chosenFNMDirectoryURL: URL?
+    /// Inspector-created contexts are validated against this managed store.
+    let chosenFNMDirectoryURL: URL
 
     nonisolated init(
         nodeVersion: String,
         nodeExecutableURL: URL,
         pnpmVersion: String?,
         pnpmExecutableURL: URL?,
-        fnmExecutableURL: URL?,
-        fnmSelector: String?,
-        chosenFNMDirectoryURL: URL? = nil
+        fnmExecutableURL: URL,
+        fnmSelector: String,
+        chosenFNMDirectoryURL: URL
     ) {
         self.nodeVersion = nodeVersion
         self.nodeExecutableURL = nodeExecutableURL
@@ -131,8 +148,12 @@ nonisolated struct ProvisioningRuntimeContext: Equatable, Sendable {
         self.chosenFNMDirectoryURL = chosenFNMDirectoryURL
     }
 
+    /// Structural validation is deliberately path-component based, so a root
+    /// such as `/tmp/fnm-evil` cannot pass a naive string-prefix check.
     var isManagedByFNM: Bool {
-        fnmExecutableURL != nil && fnmSelector != nil && chosenFNMDirectoryURL != nil
+        guard let fnmSelector, fnmExecutableURL != nil else { return false }
+        return !fnmSelector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            ProvisioningRuntimePolicy.isManagedNodeExecutable(nodeExecutableURL, within: chosenFNMDirectoryURL)
     }
     var hasUsablePnpm: Bool {
         guard let pnpmVersion, pnpmExecutableURL != nil else { return false }

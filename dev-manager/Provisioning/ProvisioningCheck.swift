@@ -26,7 +26,6 @@ nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
         case waiting(String)
         case unverified(String)
         case ready(String)
-        case notRequired(String)
         case missing(String)
         case attention(String)
 
@@ -36,10 +35,8 @@ nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
         }
 
         nonisolated var isSatisfied: Bool {
-            switch self {
-            case .ready, .notRequired: return true
-            default: return false
-            }
+            if case .ready = self { return true }
+            return false
         }
 
         nonisolated var isMissing: Bool {
@@ -49,6 +46,11 @@ nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
 
         nonisolated var isUnverified: Bool {
             if case .unverified = self { return true }
+            return false
+        }
+
+        nonisolated var isAttention: Bool {
+            if case .attention = self { return true }
             return false
         }
     }

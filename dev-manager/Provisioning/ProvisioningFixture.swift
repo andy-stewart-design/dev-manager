@@ -9,7 +9,8 @@ nonisolated struct ProvisioningFixtureResult: Sendable {
 
 nonisolated enum ProvisioningFixture {
     nonisolated static func materialize(using context: ProvisioningRuntimeContext) throws -> ProvisioningFixtureResult {
-        guard context.hasUsablePnpm,
+        guard context.isManagedByFNM,
+              context.hasUsablePnpm,
               let pnpm = context.pnpmExecutableURL else {
             throw FixtureProvisioningError.unusableRuntime
         }
@@ -29,7 +30,7 @@ nonisolated enum ProvisioningFixture {
         switch folderKind {
         case .directory:
             try validateExistingFixture(at: folder, context: context)
-            return result(folder: folder, context: context, pnpm: pnpm)
+            return try result(folder: folder, context: context, pnpm: pnpm)
         case .missing:
             break
         case .symlink, .regular, .other:
@@ -68,36 +69,31 @@ nonisolated enum ProvisioningFixture {
         }
         try fileManager.moveItem(at: stage, to: folder)
         stageExists = false
-        return result(folder: folder, context: context, pnpm: pnpm)
+        return try result(folder: folder, context: context, pnpm: pnpm)
     }
 
-    private nonisolated static func result(folder: URL, context: ProvisioningRuntimeContext, pnpm: URL) -> ProvisioningFixtureResult {
-        let command: String
-        if context.isManagedByFNM,
-           let fnm = context.fnmExecutableURL,
-           let selector = context.fnmSelector,
-           let root = context.chosenFNMDirectoryURL {
-            let rootAssignment = "FNM_DIR=\(shellQuote(root.standardizedFileURL.path)) "
-            command = "\(rootAssignment)FNM_COREPACK_ENABLED=false \(shellQuote(fnm.path)) exec --using \(shellQuote(selector)) \(shellQuote(pnpm.standardizedFileURL.path)) dev"
-        } else {
-            let nodeDirectory = context.nodeExecutableURL.deletingLastPathComponent().path
-            let pnpmDirectory = pnpm.deletingLastPathComponent().path
-            let path = [nodeDirectory, pnpmDirectory, ProvisioningConfiguration.safeSystemPATH].joined(separator: ":")
-            command = "/usr/bin/env PATH=\(shellQuote(path)) \(shellQuote(pnpm.path)) dev"
+    private nonisolated static func result(folder: URL, context: ProvisioningRuntimeContext, pnpm: URL) throws -> ProvisioningFixtureResult {
+        guard let fnmURL = context.fnmExecutableURL, let selector = context.fnmSelector else {
+            throw FixtureProvisioningError.unusableRuntime
         }
+        let rootAssignment = "FNM_DIR=\(shellQuote(context.chosenFNMDirectoryURL.standardizedFileURL.path)) "
+        let command = "\(rootAssignment)FNM_COREPACK_ENABLED=false \(shellQuote(fnmURL.path)) exec --using \(shellQuote(selector)) \(shellQuote(pnpm.standardizedFileURL.path)) dev"
         return ProvisioningFixtureResult(folder: folder, command: command)
     }
 
     nonisolated static func fixtureMetadataJSON(using context: ProvisioningRuntimeContext) throws -> String {
+        guard let fnmURL = context.fnmExecutableURL, let selector = context.fnmSelector else {
+            throw FixtureProvisioningError.unusableRuntime
+        }
         let pnpm = context.pnpmVersion ?? ProvisioningRuntimePolicy.recommendedPnpmVersion
         return try encodedJSON([
             "nodeVersion": context.nodeVersion,
             "nodePath": context.nodeExecutableURL.path,
             "pnpmVersion": pnpm,
             "pnpmPath": context.pnpmExecutableURL?.path ?? "",
-            "fnmPath": context.fnmExecutableURL?.path ?? "",
-            "fnmDirectoryPath": context.chosenFNMDirectoryURL?.standardizedFileURL.path ?? "",
-            "fnmSelector": context.fnmSelector ?? ""
+            "fnmPath": fnmURL.path,
+            "fnmDirectoryPath": context.chosenFNMDirectoryURL.standardizedFileURL.path,
+            "fnmSelector": selector
         ])
     }
 

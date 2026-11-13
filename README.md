@@ -8,13 +8,13 @@ The settings gear exposes project metadata, the command, and entry removal (remo
 
 - macOS 15 or later
 - Apple Silicon and a logged-in administrator for optional machine-changing setup
-- Node.js and the appropriate package manager available through an existing installation or Setup
+- Node.js managed by the supported version manager (currently fnm), with the appropriate package manager available through an existing managed installation or Setup
 - Each project’s dependencies installed separately
 - A project command that can run through a zsh login/interactive environment
 
 The optional Setup surface checks supported local Apple developer tools, Homebrew, fnm, Node, and pnpm. It can hand off Apple Command Line Tools to Apple’s graphical installer and Homebrew.pkg to macOS Installer; Dev Manager does not collect passwords or perform those privileged GUI steps itself. It can optionally add or restore its marked fnm block in `~/.zshrc`, with explicit consent; it never edits `~/.zprofile`.
 
-Setup accepts stable Node 22/24/26 and pnpm 10/11/12 after checking that they run together; exact patch versions are not required. Existing usable versions are reused without automatic upgrades. fnm is optional when a supported unmanaged Node/pnpm pair is already available, and is used for app-managed Node installation when needed.
+Setup accepts stable Node 22/24/26 and pnpm 10/11/12 after checking that they run together; exact patch versions are not required. Existing usable versions are reused without automatic upgrades. Node must be managed by the supported version manager (currently fnm); standalone Node installations are not adopted or probed for readiness. fnm is the required backend when Node or pnpm setup is needed.
 
 Dev Manager does not install project dependencies. Current arbitrary project commands remain shell-based and require their own dependencies and compatible tool versions; the app does not yet choose commands or versions from repository metadata and does not provide a runner fallback.
 

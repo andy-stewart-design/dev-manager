@@ -22,7 +22,7 @@ struct ProvisioningFixtureTests {
         #expect(value["nodePath"] == context.nodeExecutableURL.path)
         #expect(value["pnpmPath"] == context.pnpmExecutableURL?.path)
         #expect(value["fnmPath"] == context.fnmExecutableURL?.path)
-        #expect(value["fnmDirectoryPath"] == context.chosenFNMDirectoryURL?.standardizedFileURL.path)
+        #expect(value["fnmDirectoryPath"] == context.chosenFNMDirectoryURL.standardizedFileURL.path)
         #expect(value["fnmSelector"] == context.fnmSelector)
     }
 }

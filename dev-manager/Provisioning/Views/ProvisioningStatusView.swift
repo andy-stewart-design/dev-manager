@@ -273,10 +273,7 @@ struct ProvisioningStatusView: View {
     private var runtimeEnvironmentState: ProvisioningCheck.State {
         let states = [checkState(for: .fnm), checkState(for: .node), checkState(for: .pnpm)]
         if states.allSatisfy(\.isSatisfied) {
-            if case .notRequired = checkState(for: .fnm) {
-                return .ready("Node and pnpm are ready; fnm is optional for this existing unmanaged pair.")
-            }
-            return .ready("All runtime components are ready.")
+            return .ready("All managed runtime components are ready.")
         }
         if states.contains(where: isActionable) { return .attention("One or more components needs attention.") }
         if states.contains(where: isStateChecking) { return .checking }
@@ -289,7 +286,7 @@ struct ProvisioningStatusView: View {
         let details = [ProvisioningCheck.ID.fnm, .node, .pnpm].compactMap { id in
             model.checks.first(where: { $0.id == id }).map { "\(id.title): \(detail(for: $0.state))" }
         }
-        return details.isEmpty ? "Node and pnpm must be ready; fnm is optional only when an existing unmanaged pair is usable." : details.joined(separator: "\n")
+        return details.isEmpty ? "fnm, managed Node, and pnpm must be ready." : details.joined(separator: "\n")
     }
 
     private func version(for id: ProvisioningCheck.ID, state: ProvisioningCheck.State) -> String? {
@@ -308,9 +305,10 @@ struct ProvisioningStatusView: View {
     private func detail(for state: ProvisioningCheck.State) -> String {
         switch state {
         case .checking: return "The app is checking this requirement."
-        case let .waiting(detail), let .unverified(detail), let .ready(detail), let .notRequired(detail), let .missing(detail), let .attention(detail): return detail
+        case let .waiting(detail), let .unverified(detail), let .ready(detail), let .missing(detail), let .attention(detail): return detail
         }
     }
+
 
     private func isActionable(_ state: ProvisioningCheck.State) -> Bool {
         if case .attention = state { return true }
@@ -341,8 +339,6 @@ struct ProvisioningStatusView: View {
             Image(systemName: "ellipsis.circle")
         case .ready:
             Image(systemName: "checkmark.circle.fill")
-        case .notRequired:
-            Image(systemName: "minus.circle")
         case .unverified:
             Image(systemName: "circle.dashed")
         case .missing:
@@ -358,7 +354,6 @@ struct ProvisioningStatusView: View {
         case .waiting: return "Waiting for external installer"
         case .unverified: return "Not yet verified"
         case .ready: return "Ready"
-        case .notRequired: return "Optional; not required for the usable existing runtime"
         case .missing: return "Missing"
         case .attention: return "Needs attention"
         }
@@ -366,7 +361,7 @@ struct ProvisioningStatusView: View {
 
     private func color(for state: ProvisioningCheck.State) -> Color {
         switch state {
-        case .checking, .waiting, .unverified, .notRequired, .missing: return .secondary
+        case .checking, .waiting, .unverified, .missing: return .secondary
         case .ready: return .green
         case .attention: return .orange
         }

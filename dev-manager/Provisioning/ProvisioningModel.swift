@@ -115,7 +115,9 @@ final class ProvisioningModel: ObservableObject {
     }
 
     var allRuntimeToolsReady: Bool {
-        nodeState?.isReady == true && pnpmState?.isReady == true && runtimeContext?.hasUsablePnpm == true
+        checks.first(where: { $0.id == .fnm })?.state.isReady == true &&
+            nodeState?.isReady == true && pnpmState?.isReady == true &&
+            runtimeContext?.isManagedByFNM == true && runtimeContext?.hasUsablePnpm == true
     }
 
     var developerToolsReady: Bool {
@@ -148,7 +150,7 @@ final class ProvisioningModel: ObservableObject {
             return .install(label: "Install", reason: "Check the machine before installing this tool.", enabled: false)
         }
         switch state {
-        case .ready, .notRequired:
+        case .ready:
             return .none
         case let .attention(detail):
             return .check(label: "Check again", reason: detail, enabled: true)
@@ -168,7 +170,7 @@ final class ProvisioningModel: ObservableObject {
             return .install(label: "Install", reason: "Another setup operation is in progress.", enabled: false)
         }
         switch state {
-        case .ready, .notRequired:
+        case .ready:
             return .none
         case let .attention(detail):
             return .check(label: "Check again", reason: "Another setup operation is in progress. \(detail)", enabled: false)
@@ -202,9 +204,17 @@ final class ProvisioningModel: ObservableObject {
         guard hasCompletedCheck else { return "Check installation before installing a tool." }
         switch id {
         case .node:
-            guard state(for: .fnm)?.isReady == true else { return "Install and verify fnm first when Node must be installed." }
+            guard developerToolsReady, state(for: .homebrew)?.isReady == true,
+                  state(for: .fnm)?.isReady == true else {
+                return "Install and verify Apple developer tools, Homebrew, and fnm first."
+            }
         case .pnpm:
-            guard state(for: .node)?.isReady == true, runtimeContext != nil else { return "Verify a usable Node context before installing pnpm." }
+            guard developerToolsReady, state(for: .homebrew)?.isReady == true,
+                  state(for: .fnm)?.isReady == true,
+                  state(for: .node)?.isReady == true,
+                  runtimeContext?.isManagedByFNM == true else {
+                return "Install and verify Apple developer tools, Homebrew, fnm, and a managed Node first."
+            }
         case .developerTools, .homebrew, .fnm:
             let dependencyOrder: [ProvisioningCheck.ID] = [.developerTools, .homebrew, .fnm]
             for prerequisite in dependencyOrder.prefix(while: { $0 != id }) {
@@ -569,8 +579,8 @@ final class ProvisioningModel: ObservableObject {
         isShowingShellConfigurationConsent = false
         installationFailureLogURL = nil
         guard canConfigureShell, let context = runtimeContext,
-              let fnmExecutableURL = context.fnmExecutableURL,
-              let nodeSelector = context.fnmSelector else {
+              let fnmURL = context.fnmExecutableURL,
+              let selector = context.fnmSelector else {
             throw ProvisioningShellConfiguration.ConfigurationError.unsupported("a supported fnm-managed Node/pnpm context is not ready")
         }
         isConfiguringShell = true
@@ -578,8 +588,8 @@ final class ProvisioningModel: ObservableObject {
         defer { isConfiguringShell = false }
         do {
             shellConfigurationStatus = try ProvisioningShellConfiguration.configure(
-                using: fnmExecutableURL,
-                nodeVersion: nodeSelector,
+                using: fnmURL,
+                nodeVersion: selector,
                 fnmDirectoryURL: context.chosenFNMDirectoryURL
             )
             shellInspection = ProvisioningShellConfiguration.inspect()
@@ -602,9 +612,8 @@ final class ProvisioningModel: ObservableObject {
             let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             let shell = try ShellEnvironment.currentZsh(homeDirectory: home, zdotdir: home)
             var environment = shell.environment
-            if let context = runtimeContext, context.isManagedByFNM,
-               let fnmDirectoryURL = context.chosenFNMDirectoryURL {
-                environment["FNM_DIR"] = fnmDirectoryURL.path
+            if let context = runtimeContext, context.isManagedByFNM {
+                environment["FNM_DIR"] = context.chosenFNMDirectoryURL.path
             }
             if let context = runtimeContext {
                 environment["PATH"] = ProvisioningExecutablePaths.runtimePATH(
