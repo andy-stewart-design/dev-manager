@@ -1,11 +1,13 @@
-#if DEBUG
 import Foundation
 
 nonisolated enum ProvisioningConfiguration {
-    nonisolated static let nodeVersion = "24.22.2"
-    nonisolated static let pnpmVersion = "12.18.0"
+    // Compatibility aliases for existing UI/install labels. These are recommended
+    // install targets, not readiness pins.
+    nonisolated static var nodeVersion: String { ProvisioningRuntimePolicy.recommendedNodeVersion }
+    nonisolated static var pnpmVersion: String { ProvisioningRuntimePolicy.recommendedPnpmVersion }
 
     nonisolated static let commandTimeout: TimeInterval = 8
+    nonisolated static let runtimeInspectionBudget: TimeInterval = 20
     nonisolated static let installTimeout: TimeInterval = 15 * 60
     // Cleanup is deliberately finite and shared by read-only checks and installers.
     // The value applies separately to the TERM and KILL phases; output-drain
@@ -17,6 +19,8 @@ nonisolated enum ProvisioningConfiguration {
     nonisolated static let officialHomebrewReleasePrefix = "https://github.com/Homebrew/brew/releases/download/"
 
     nonisolated static let homebrewURL = URL(fileURLWithPath: "/opt/homebrew/bin/brew")
+
+    nonisolated static let safeSystemPATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
     nonisolated static var guiSafePATH: String {
         let inherited = ProcessInfo.processInfo.environment["PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -56,22 +60,12 @@ nonisolated enum ProvisioningConfiguration {
         ]) { _, new in new }
     }
 
+#if DEBUG
     nonisolated static var fixtureFolderURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Dev Manager", isDirectory: true)
             .appendingPathComponent("Provisioning Fixture", isDirectory: true)
     }
-
-    nonisolated static let fixturePackageJSON = """
-    {
-      \"name\": \"dev-manager-provisioning-fixture\",
-      \"private\": true,
-      \"version\": \"1.0.0\",
-      \"packageManager\": \"pnpm@\(pnpmVersion)\",
-      \"engines\": { \"node\": \"\(nodeVersion)\" },
-      \"scripts\": { \"dev\": \"node server.js\" }
-    }
-    """
 
     nonisolated static let fixtureServerJS = """
     const http = require(\"node:http\");
@@ -89,14 +83,6 @@ nonisolated enum ProvisioningConfiguration {
     """
 
     nonisolated static let fixtureMarker = "dev-manager-provisioning-fixture-v1\n"
-
-    nonisolated static var fixtureFiles: [(name: String, contents: String)] {
-        [
-            (".dev-manager-fixture", fixtureMarker),
-            ("package.json", fixturePackageJSON),
-            ("server.js", fixtureServerJS),
-            (".node-version", "\(nodeVersion)\n")
-        ]
-    }
-}
 #endif
+
+}

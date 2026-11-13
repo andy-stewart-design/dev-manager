@@ -1,12 +1,11 @@
-#if DEBUG
 import Combine
 import Darwin
 import Foundation
 
 @MainActor
 final class ProvisioningModel: ObservableObject {
-    static var nodeVersion: String { ProvisioningConfiguration.nodeVersion }
-    static var pnpmVersion: String { ProvisioningConfiguration.pnpmVersion }
+    static var nodeVersion: String { ProvisioningRuntimePolicy.recommendedNodeVersion }
+    static var pnpmVersion: String { ProvisioningRuntimePolicy.recommendedPnpmVersion }
 
     @Published private(set) var checks: [ProvisioningCheck] = []
     @Published private(set) var isChecking = false
@@ -16,8 +15,13 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var installationLogURL: URL? = ProvisioningInstallationLog.existingLogURL()
     @Published private(set) var installationFailureLogURL: URL?
     @Published private(set) var installationLogWarning: String?
+#if DEBUG
     @Published private(set) var fixtureURL: URL?
     @Published private(set) var fixtureCommand: String?
+#endif
+    /// The last atomically applied concrete context. It is cleared when a
+    /// runtime refresh cannot establish a usable context.
+    @Published private(set) var runtimeContext: ProvisioningRuntimeContext?
 
     enum MessagePresentation: Equatable {
         case progress(String)
@@ -42,7 +46,9 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var isVerifyingShell = false
     @Published private(set) var isRestoringShell = false
     @Published var isShowingToolConsent = false
+#if DEBUG
     @Published var isShowingFixtureConsent = false
+#endif
     @Published var isShowingShellConfigurationConsent = false
     @Published var isShowingShellRestoreConsent = false
 
@@ -56,6 +62,9 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var shellInspection = ProvisioningShellConfiguration.Inspection.notConfigured("The optional fnm shell configuration has not been checked.")
     private var activeToolOperationID: UUID?
     private var fnmExecutableURL: URL?
+    /// Retained independently of runtimeContext so a missing Node can still be
+    /// installed into the exact root selected by read-only fnm inspection.
+    private(set) var chosenFNMDirectoryURL: URL?
 
     var supportedEnvironmentIssue: String? { Self.environmentIssue }
 
@@ -65,11 +74,15 @@ final class ProvisioningModel: ObservableObject {
 
     var isSupportedEnvironment: Bool { supportedEnvironmentIssue == nil }
     var isBusy: Bool {
-        isChecking || activeInspectionID != nil || activeToolID != nil ||
+        let hasActiveOperation = isChecking || activeInspectionID != nil || activeToolID != nil ||
             isRequestingCommandLineTools || isDownloadingHomebrew || isInstallingRuntime ||
             isConfiguringShell || isVerifyingShell || isRestoringShell ||
-            isShowingToolConsent || isShowingFixtureConsent ||
-            isShowingShellConfigurationConsent || isShowingShellRestoreConsent
+            isShowingToolConsent || isShowingShellConfigurationConsent || isShowingShellRestoreConsent
+#if DEBUG
+        return hasActiveOperation || isShowingFixtureConsent
+#else
+        return hasActiveOperation
+#endif
     }
 
     enum ToolRowAction: Equatable {
@@ -102,7 +115,7 @@ final class ProvisioningModel: ObservableObject {
     }
 
     var allRuntimeToolsReady: Bool {
-        fnmState?.isReady == true && nodeState?.isReady == true && pnpmState?.isReady == true
+        nodeState?.isReady == true && pnpmState?.isReady == true && runtimeContext?.hasUsablePnpm == true
     }
 
     var developerToolsReady: Bool {
@@ -135,7 +148,7 @@ final class ProvisioningModel: ObservableObject {
             return .install(label: "Install", reason: "Check the machine before installing this tool.", enabled: false)
         }
         switch state {
-        case .ready:
+        case .ready, .notRequired:
             return .none
         case let .attention(detail):
             return .check(label: "Check again", reason: detail, enabled: true)
@@ -155,7 +168,7 @@ final class ProvisioningModel: ObservableObject {
             return .install(label: "Install", reason: "Another setup operation is in progress.", enabled: false)
         }
         switch state {
-        case .ready:
+        case .ready, .notRequired:
             return .none
         case let .attention(detail):
             return .check(label: "Check again", reason: "Another setup operation is in progress. \(detail)", enabled: false)
@@ -187,10 +200,17 @@ final class ProvisioningModel: ObservableObject {
     private func prerequisiteReason(for id: ProvisioningCheck.ID) -> String? {
         guard isSupportedEnvironment else { return supportedEnvironmentIssue.map { "Setup is unavailable: \($0)." } }
         guard hasCompletedCheck else { return "Check installation before installing a tool." }
-        let dependencyOrder: [ProvisioningCheck.ID] = [.developerTools, .homebrew, .fnm, .node, .pnpm]
-        for prerequisite in dependencyOrder.prefix(while: { $0 != id }) {
-            if state(for: prerequisite)?.isReady != true {
-                return "Install and verify \(prerequisite.title) first."
+        switch id {
+        case .node:
+            guard state(for: .fnm)?.isReady == true else { return "Install and verify fnm first when Node must be installed." }
+        case .pnpm:
+            guard state(for: .node)?.isReady == true, runtimeContext != nil else { return "Verify a usable Node context before installing pnpm." }
+        case .developerTools, .homebrew, .fnm:
+            let dependencyOrder: [ProvisioningCheck.ID] = [.developerTools, .homebrew, .fnm]
+            for prerequisite in dependencyOrder.prefix(while: { $0 != id }) {
+                if state(for: prerequisite)?.isReady != true {
+                    return "Install and verify \(prerequisite.title) first."
+                }
             }
         }
         return nil
@@ -211,25 +231,33 @@ final class ProvisioningModel: ObservableObject {
             prerequisiteReason(for: id) == nil && isInstallableMissing(id)
     }
 
+#if DEBUG
     var canPrepareFixture: Bool {
         hasCompletedCheck && isSupportedEnvironment && !isBusy && allRuntimeToolsReady
     }
+#endif
 
     var canConfigureShell: Bool {
-        hasCompletedCheck && isSupportedEnvironment && !isBusy && allRuntimeToolsReady
+        hasCompletedCheck && isSupportedEnvironment && !isBusy && allRuntimeToolsReady &&
+            runtimeContext?.isManagedByFNM == true && ifConfiguredInspectionAllowsConfigure
+    }
+
+    private var ifConfiguredInspectionAllowsConfigure: Bool {
+        if case .notConfigured = shellInspection { return true }
+        return false
     }
 
     var canVerifyShell: Bool {
-        canConfigureShell && shellInspection.isConfigured
+        hasCompletedCheck && isSupportedEnvironment && !isBusy && allRuntimeToolsReady &&
+            runtimeContext?.isManagedByFNM == true && shellInspection.isConfigured
     }
 
     var canRestoreShell: Bool {
-        hasCompletedCheck && isSupportedEnvironment && !isBusy && ProvisioningShellConfiguration.hasRecordedConfiguration()
+        hasCompletedCheck && isSupportedEnvironment && !isBusy && ProvisioningShellConfiguration.canRestore()
     }
 
     private var homebrewMissing: Bool { homebrewState?.isMissing == true }
     private var homebrewState: ProvisioningCheck.State? { state(for: .homebrew) }
-    private var fnmState: ProvisioningCheck.State? { state(for: .fnm) }
     private var nodeState: ProvisioningCheck.State? { state(for: .node) }
     private var pnpmState: ProvisioningCheck.State? { state(for: .pnpm) }
 
@@ -257,7 +285,11 @@ final class ProvisioningModel: ObservableObject {
         let inspection = await ProvisioningInspector.inspect()
         guard activeInspectionID == operationID else { return }
 
+        // Apply checks and their concrete context together so a failed refresh
+        // cannot leave an old runtime eligible for a machine-changing action.
         fnmExecutableURL = inspection.fnmExecutableURL
+        chosenFNMDirectoryURL = inspection.chosenFNMDirectoryURL
+        runtimeContext = inspection.runtimeContext
         checks = [inspection.developerTools, inspection.homebrew, inspection.fnm, inspection.node, inspection.pnpm]
         isChecking = false
         activeInspectionID = nil
@@ -265,8 +297,7 @@ final class ProvisioningModel: ObservableObject {
         if isInitialInspection { hasLoadedInitialInspection = true }
         commandLineToolsRequestNeedsCheck = false
         homebrewHandoffNeedsCheck = false
-        shellInspection = ProvisioningShellConfiguration.inspect()
-        shellConfigurationStatus = shellInspection.message
+        refreshShellInspection()
         if let supportedEnvironmentIssue {
             showError("Machine-changing setup is disabled: \(supportedEnvironmentIssue)")
         } else {
@@ -292,16 +323,27 @@ final class ProvisioningModel: ObservableObject {
         isChecking = false
         activeInspectionTargetID = nil
         activeInspectionID = nil
+        refreshShellInspection()
         clearMessage()
+    }
+
+    private func refreshShellInspection() {
+        shellInspection = ProvisioningShellConfiguration.inspect()
+        shellConfigurationStatus = shellInspection.message
     }
 
     private func apply(_ inspection: ProvisioningTargetedInspection, for target: ProvisioningCheck.ID) {
         let returned = Dictionary(uniqueKeysWithValues: inspection.checks.map { ($0.id, $0) })
         checks = checks.map { returned[$0.id] ?? $0 }
         if [.fnm, .node, .pnpm].contains(target) {
-            // A failed runtime context must not leave an old fnm URL eligible for writes.
+            // A failed runtime context must not leave an old URL/context eligible
+            // for writes. The fnm executable itself remains available for a
+            // missing Node install, while shell actions require context.
             fnmExecutableURL = inspection.fnmExecutableURL
+            chosenFNMDirectoryURL = inspection.chosenFNMDirectoryURL
+            runtimeContext = inspection.runtimeContext
         }
+        refreshShellInspection()
     }
 
     func requestCommandLineTools() async {
@@ -430,8 +472,13 @@ final class ProvisioningModel: ObservableObject {
             return
         }
         let fnm = fnmExecutableURL
-        if id != .fnm, fnm == nil {
-            showError("fnm is not usable, so Node and pnpm were not changed.")
+        if id == .node, fnm == nil {
+            showError("fnm is not usable, so the missing Node runtime was not changed.")
+            finishToolOperation(id, operationID: operationID)
+            return
+        }
+        if id == .pnpm, runtimeContext == nil {
+            showError("No selected Node context is available, so pnpm was not changed.")
             finishToolOperation(id, operationID: operationID)
             return
         }
@@ -444,11 +491,11 @@ final class ProvisioningModel: ObservableObject {
         case .node:
             guard let fnm else { finishToolOperation(id, operationID: operationID); return }
             showProgress("Installing Node \(Self.nodeVersion) in fnm…")
-            result = await ProvisioningRuntimeInstaller.installNode(using: fnm)
+            result = await ProvisioningRuntimeInstaller.installNode(using: fnm, fnmDirectoryURL: chosenFNMDirectoryURL)
         case .pnpm:
-            guard let fnm else { finishToolOperation(id, operationID: operationID); return }
-            showProgress("Installing pnpm \(Self.pnpmVersion) inside Node \(Self.nodeVersion)…")
-            result = await ProvisioningRuntimeInstaller.installPnpm(using: fnm)
+            guard let context = runtimeContext else { finishToolOperation(id, operationID: operationID); return }
+            showProgress("Installing pnpm \(Self.pnpmVersion) inside Node \(context.nodeVersion)…")
+            result = await ProvisioningRuntimeInstaller.installPnpm(using: context)
         case .developerTools, .homebrew:
             finishToolOperation(id, operationID: operationID)
             return
@@ -473,12 +520,13 @@ final class ProvisioningModel: ObservableObject {
         finishToolOperation(id, operationID: operationID)
     }
 
+#if DEBUG
     func prepareFixture() throws {
         isShowingFixtureConsent = false
-        guard canPrepareFixture, let fnm = fnmExecutableURL else { return }
+        guard canPrepareFixture, let context = runtimeContext else { return }
         showProgress("Preparing the fixture project…")
         do {
-            let fixture = try ProvisioningFixture.materialize(using: fnm)
+            let fixture = try ProvisioningFixture.materialize(using: context)
             fixtureURL = fixture.folder
             fixtureCommand = fixture.command
             clearMessage()
@@ -487,6 +535,7 @@ final class ProvisioningModel: ObservableObject {
             throw error
         }
     }
+#endif
 
     private func runtimePrerequisitesReady(for id: ProvisioningCheck.ID) -> Bool {
         switch id {
@@ -519,14 +568,20 @@ final class ProvisioningModel: ObservableObject {
     func configureShell() throws {
         isShowingShellConfigurationConsent = false
         installationFailureLogURL = nil
-        guard canConfigureShell, let fnmExecutableURL else {
-            throw ProvisioningShellConfiguration.ConfigurationError.unsupported("the supported environment and pinned fnm/Node/pnpm runtime are not ready")
+        guard canConfigureShell, let context = runtimeContext,
+              let fnmExecutableURL = context.fnmExecutableURL,
+              let nodeSelector = context.fnmSelector else {
+            throw ProvisioningShellConfiguration.ConfigurationError.unsupported("a supported fnm-managed Node/pnpm context is not ready")
         }
         isConfiguringShell = true
         showProgress("Configuring the optional shell…")
         defer { isConfiguringShell = false }
         do {
-            shellConfigurationStatus = try ProvisioningShellConfiguration.configure(using: fnmExecutableURL, nodeVersion: Self.nodeVersion)
+            shellConfigurationStatus = try ProvisioningShellConfiguration.configure(
+                using: fnmExecutableURL,
+                nodeVersion: nodeSelector,
+                fnmDirectoryURL: context.chosenFNMDirectoryURL
+            )
             shellInspection = ProvisioningShellConfiguration.inspect()
             clearMessage()
         } catch {
@@ -547,6 +602,17 @@ final class ProvisioningModel: ObservableObject {
             let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             let shell = try ShellEnvironment.currentZsh(homeDirectory: home, zdotdir: home)
             var environment = shell.environment
+            if let context = runtimeContext, context.isManagedByFNM,
+               let fnmDirectoryURL = context.chosenFNMDirectoryURL {
+                environment["FNM_DIR"] = fnmDirectoryURL.path
+            }
+            if let context = runtimeContext {
+                environment["PATH"] = ProvisioningExecutablePaths.runtimePATH(
+                    selectedNodeURL: context.nodeExecutableURL,
+                    inheritedPATH: environment["PATH"] ?? "",
+                    safeSystemPATH: ProvisioningConfiguration.safeSystemPATH
+                )
+            }
             environment["FNM_COREPACK_ENABLED"] = "false"
             environment["COREPACK_ENABLE_NETWORK"] = "0"
             environment["COREPACK_DEFAULT_TO_LATEST"] = "0"
@@ -571,12 +637,15 @@ final class ProvisioningModel: ObservableObject {
                 guard parts.count == 2 else { return }
                 values[parts[0]] = parts[1]
             }
-            guard values["node_version"] == "v\(Self.nodeVersion)", values["pnpm_version"] == Self.pnpmVersion,
+            guard let nodeVersion = values["node_version"],
+                  let pnpmVersion = values["pnpm_version"],
+                  ProvisioningRuntimePolicy.isSupportedNodeVersion(nodeVersion),
+                  ProvisioningRuntimePolicy.isSupportedPnpmVersion(pnpmVersion),
                   values["fnm"]?.hasPrefix("/") == true, values["node"]?.hasPrefix("/") == true,
                   values["pnpm"]?.hasPrefix("/") == true else {
-                throw ProvisioningShellConfiguration.ConfigurationError.conflict("fresh interactive Zsh resolved unexpected fnm, Node, or pnpm paths/versions; no shell file was changed")
+                throw ProvisioningShellConfiguration.ConfigurationError.conflict("fresh interactive Zsh did not resolve a supported stable Node/pnpm pair with absolute paths; no shell file was changed")
             }
-            shellConfigurationStatus = "Fresh interactive Zsh verified fnm, Node \(Self.nodeVersion), and pnpm \(Self.pnpmVersion). This check used /bin/zsh -i -c and did not use a login shell."
+            shellConfigurationStatus = "Fresh interactive Zsh verified \(nodeVersion) and pnpm \(pnpmVersion) at the reported absolute paths. This check used /bin/zsh -i -c and did not use a login shell."
             clearMessage()
         } catch {
             shellConfigurationStatus = error.localizedDescription
@@ -587,7 +656,12 @@ final class ProvisioningModel: ObservableObject {
     func restoreShell() throws {
         isShowingShellRestoreConsent = false
         installationFailureLogURL = nil
-        guard canRestoreShell else { return }
+        guard canRestoreShell else {
+            refreshShellInspection()
+            let refusal = "Restore was refused after rechecking the optional shell configuration: \(shellInspection.message)"
+            showError(refusal)
+            throw ProvisioningShellConfiguration.ConfigurationError.conflict(refusal)
+        }
         isRestoringShell = true
         showProgress("Restoring the optional shell configuration…")
         defer { isRestoringShell = false }
@@ -657,5 +731,3 @@ final class ProvisioningModel: ObservableObject {
         return getgid() == adminGID || groups.contains(adminGID)
     }
 }
-
-#endif

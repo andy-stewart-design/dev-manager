@@ -1,4 +1,3 @@
-#if DEBUG
 import AppKit
 import SwiftUI
 
@@ -6,12 +5,14 @@ struct AdvancedProvisioningSheet: View {
     @ObservedObject var model: ProvisioningModel
     @Environment(\.dismiss) private var dismiss
     let onRequestConsent: (ProvisioningConsent) -> Void
+#if DEBUG
     let onShowFixture: () -> Void
+#endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Advanced / spike tools")
+                Text("Advanced setup")
                     .font(.title3.weight(.semibold))
                 Spacer()
                 Button("Close") { dismiss() }
@@ -39,6 +40,7 @@ struct AdvancedProvisioningSheet: View {
                     }
                     .disabled(model.isBusy)
 
+#if DEBUG
                     Button {
                         onRequestConsent(.prepareFixture)
                     } label: {
@@ -53,10 +55,10 @@ struct AdvancedProvisioningSheet: View {
                         }
                         .disabled(model.isBusy)
                     }
-
+#endif
                     GroupBox("Optional future interactive Zsh sessions") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("After the no-shell-edit fixture proof, you may add one marked block to ~/.zshrc. It makes fnm-managed Node and pnpm available in future interactive Zsh sessions; it is not required for this app or its fixture. ~/.zprofile is never edited.")
+                            Text("You may add one marked block to ~/.zshrc. It makes fnm-managed Node and pnpm available in future interactive Zsh sessions; it is optional for this app. ~/.zprofile is never edited.")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
@@ -68,14 +70,17 @@ struct AdvancedProvisioningSheet: View {
                                     onRequestConsent(.configureShell)
                                 }
                                 .disabled(!model.canConfigureShell)
+                                .help("Available only when no shell setup is found; Dev Manager will not overwrite recognized or ambiguous external fnm setup.")
                                 Button("Check fresh Zsh", systemImage: "terminal") {
                                     Task { await model.verifyFreshShell() }
                                 }
                                 .disabled(!model.canVerifyShell)
+                                .help("Explicitly verify a fresh interactive Zsh. A recognized external initializer is not proof that every shell runs it.")
                                 Button("Restore", systemImage: "arrow.uturn.backward") {
                                     onRequestConsent(.restoreShell)
                                 }
                                 .disabled(!model.canRestoreShell)
+                                .help("Restore only an unchanged app-owned block or acknowledge a recoverable app-owned receipt; external setup is never adopted.")
                             }
                             if !model.shellVerificationOutput.isEmpty {
                                 outputView(model.shellVerificationOutput)
@@ -130,4 +135,3 @@ struct AdvancedProvisioningSheet: View {
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
     }
 }
-#endif

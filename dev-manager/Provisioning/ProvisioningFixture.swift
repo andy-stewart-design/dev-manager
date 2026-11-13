@@ -8,7 +8,11 @@ nonisolated struct ProvisioningFixtureResult: Sendable {
 }
 
 nonisolated enum ProvisioningFixture {
-    nonisolated static func materialize(using fnm: URL) throws -> ProvisioningFixtureResult {
+    nonisolated static func materialize(using context: ProvisioningRuntimeContext) throws -> ProvisioningFixtureResult {
+        guard context.hasUsablePnpm,
+              let pnpm = context.pnpmExecutableURL else {
+            throw FixtureProvisioningError.unusableRuntime
+        }
         let fileManager = FileManager.default
         let folder = ProvisioningConfiguration.fixtureFolderURL
         let container = folder.deletingLastPathComponent()
@@ -24,8 +28,8 @@ nonisolated enum ProvisioningFixture {
         let folderKind = try fixturePathKind(at: folder)
         switch folderKind {
         case .directory:
-            try validateExistingFixture(at: folder)
-            return result(folder: folder, fnm: fnm)
+            try validateExistingFixture(at: folder, context: context)
+            return result(folder: folder, context: context, pnpm: pnpm)
         case .missing:
             break
         case .symlink, .regular, .other:
@@ -51,7 +55,7 @@ nonisolated enum ProvisioningFixture {
 
         try fileManager.createDirectory(at: stage, withIntermediateDirectories: false)
         stageExists = true
-        for (name, contents) in ProvisioningConfiguration.fixtureFiles {
+        for (name, contents) in try fixtureFiles(context: context) {
             let file = stage.appendingPathComponent(name)
             guard try fixturePathKind(at: file) == .missing else {
                 throw FixtureProvisioningError.conflictingPath(file.path)
@@ -64,24 +68,75 @@ nonisolated enum ProvisioningFixture {
         }
         try fileManager.moveItem(at: stage, to: folder)
         stageExists = false
-        return result(folder: folder, fnm: fnm)
+        return result(folder: folder, context: context, pnpm: pnpm)
     }
 
-    private nonisolated static func result(folder: URL, fnm: URL) -> ProvisioningFixtureResult {
-        ProvisioningFixtureResult(
-            folder: folder,
-            command: "FNM_COREPACK_ENABLED=false \(shellQuote(fnm.path)) exec --using \(ProvisioningConfiguration.nodeVersion) pnpm dev"
-        )
+    private nonisolated static func result(folder: URL, context: ProvisioningRuntimeContext, pnpm: URL) -> ProvisioningFixtureResult {
+        let command: String
+        if context.isManagedByFNM,
+           let fnm = context.fnmExecutableURL,
+           let selector = context.fnmSelector,
+           let root = context.chosenFNMDirectoryURL {
+            let rootAssignment = "FNM_DIR=\(shellQuote(root.standardizedFileURL.path)) "
+            command = "\(rootAssignment)FNM_COREPACK_ENABLED=false \(shellQuote(fnm.path)) exec --using \(shellQuote(selector)) \(shellQuote(pnpm.standardizedFileURL.path)) dev"
+        } else {
+            let nodeDirectory = context.nodeExecutableURL.deletingLastPathComponent().path
+            let pnpmDirectory = pnpm.deletingLastPathComponent().path
+            let path = [nodeDirectory, pnpmDirectory, ProvisioningConfiguration.safeSystemPATH].joined(separator: ":")
+            command = "/usr/bin/env PATH=\(shellQuote(path)) \(shellQuote(pnpm.path)) dev"
+        }
+        return ProvisioningFixtureResult(folder: folder, command: command)
     }
 
-    private nonisolated static func validateExistingFixture(at folder: URL) throws {
+    nonisolated static func fixtureMetadataJSON(using context: ProvisioningRuntimeContext) throws -> String {
+        let pnpm = context.pnpmVersion ?? ProvisioningRuntimePolicy.recommendedPnpmVersion
+        return try encodedJSON([
+            "nodeVersion": context.nodeVersion,
+            "nodePath": context.nodeExecutableURL.path,
+            "pnpmVersion": pnpm,
+            "pnpmPath": context.pnpmExecutableURL?.path ?? "",
+            "fnmPath": context.fnmExecutableURL?.path ?? "",
+            "fnmDirectoryPath": context.chosenFNMDirectoryURL?.standardizedFileURL.path ?? "",
+            "fnmSelector": context.fnmSelector ?? ""
+        ])
+    }
+
+    private nonisolated static func fixtureFiles(context: ProvisioningRuntimeContext) throws -> [(name: String, contents: String)] {
+        let pnpm = context.pnpmVersion ?? ProvisioningRuntimePolicy.recommendedPnpmVersion
+        let packageJSON = try encodedJSON([
+            "name": "dev-manager-provisioning-fixture",
+            "private": true,
+            "version": "1.0.0",
+            "packageManager": "pnpm@\(pnpm)",
+            "engines": ["node": context.nodeVersion],
+            "scripts": ["dev": "node server.js"]
+        ])
+        let runtimeMetadata = try fixtureMetadataJSON(using: context)
+        return [
+            (".dev-manager-fixture", ProvisioningConfiguration.fixtureMarker),
+            ("package.json", packageJSON),
+            ("server.js", ProvisioningConfiguration.fixtureServerJS),
+            (".node-version", "\(context.nodeVersion)\n"),
+            (".dev-manager-runtime.json", runtimeMetadata)
+        ]
+    }
+
+    private nonisolated static func encodedJSON(_ object: [String: Any]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw FixtureProvisioningError.encodingFailed
+        }
+        return string + "\n"
+    }
+
+    private nonisolated static func validateExistingFixture(at folder: URL, context: ProvisioningRuntimeContext) throws {
         let fileManager = FileManager.default
-        let expected = Set(ProvisioningConfiguration.fixtureFiles.map { $0.name })
+        let expected = Set(try fixtureFiles(context: context).map { $0.name })
         let actual = Set(try fileManager.contentsOfDirectory(atPath: folder.path))
         guard actual == expected else {
             throw FixtureProvisioningError.unexpectedContents(folder.path)
         }
-        for (name, contents) in ProvisioningConfiguration.fixtureFiles {
+        for (name, contents) in try fixtureFiles(context: context) {
             let file = folder.appendingPathComponent(name)
             guard try fixturePathKind(at: file) == .regular else {
                 throw FixtureProvisioningError.conflictingPath(file.path)
@@ -140,6 +195,8 @@ nonisolated private enum FixturePathKind: Equatable, Sendable {
 }
 
 nonisolated private enum FixtureProvisioningError: LocalizedError, Sendable {
+    case unusableRuntime
+    case encodingFailed
     case conflictingPath(String)
     case unexpectedContents(String)
     case pathInspectionFailed(String, String)
@@ -147,6 +204,10 @@ nonisolated private enum FixtureProvisioningError: LocalizedError, Sendable {
 
     nonisolated var errorDescription: String? {
         switch self {
+        case .unusableRuntime:
+            return "The selected runtime context is not a supported Node/pnpm pair."
+        case .encodingFailed:
+            return "The fixture metadata could not be encoded safely."
         case let .conflictingPath(path):
             return "The fixture path conflicts with an existing non-owned path and was left unchanged: \(path)"
         case let .unexpectedContents(path):

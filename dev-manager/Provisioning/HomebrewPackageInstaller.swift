@@ -1,4 +1,3 @@
-#if DEBUG
 import AppKit
 import Foundation
 
@@ -46,7 +45,7 @@ nonisolated enum HomebrewPackageInstaller {
 
         var apiRequest = URLRequest(url: apiURL)
         apiRequest.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        apiRequest.setValue("DevManager/0.1 provisioning-spike", forHTTPHeaderField: "User-Agent")
+        apiRequest.setValue("DevManager/0.1", forHTTPHeaderField: "User-Agent")
         apiRequest.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         let session = urlSession()
         let (data, response) = try await session.data(for: apiRequest)
@@ -67,7 +66,7 @@ nonisolated enum HomebrewPackageInstaller {
 
         await onDownloadReady()
         var downloadRequest = URLRequest(url: downloadURL)
-        downloadRequest.setValue("DevManager/0.1 provisioning-spike", forHTTPHeaderField: "User-Agent")
+        downloadRequest.setValue("DevManager/0.1", forHTTPHeaderField: "User-Agent")
         let (temporaryURL, downloadResponse) = try await session.download(for: downloadRequest)
         guard let downloadHTTPResponse = downloadResponse as? HTTPURLResponse,
               (200..<300).contains(downloadHTTPResponse.statusCode) else {
@@ -118,4 +117,3 @@ nonisolated private struct HomebrewReleaseAsset: Decodable, Sendable {
         case browserDownloadURL = "browser_download_url"
     }
 }
-#endif

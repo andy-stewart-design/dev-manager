@@ -1,4 +1,3 @@
-#if DEBUG
 import SwiftUI
 
 struct ProvisioningView: View {
@@ -6,12 +5,16 @@ struct ProvisioningView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isShowingAdvancedSheet = false
     @State private var pendingConsent: ProvisioningConsent?
+#if DEBUG
     @State private var pendingFixtureHandoff: FixtureHandoff?
     let onFixtureReady: (URL, String) -> Void
 
     init(onFixtureReady: @escaping (URL, String) -> Void = { _, _ in }) {
         self.onFixtureReady = onFixtureReady
     }
+#else
+    init() {}
+#endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -20,11 +23,11 @@ struct ProvisioningView: View {
                     Label("Development setup", systemImage: "wrench.and.screwdriver")
                         .font(.title2.weight(.semibold))
                         .contextMenu {
-                            Button("Advanced / spike tools…", systemImage: "slider.horizontal.3") {
+                            Button("Advanced setup…", systemImage: "slider.horizontal.3") {
                                 isShowingAdvancedSheet = true
                             }
                         }
-                        .help("Right-click the title for Advanced / spike tools…")
+                        .help("Right-click the title for Advanced setup…")
                     Text("Set up the tools needed to run projects on this Mac.")
                         .foregroundStyle(.secondary)
                 }
@@ -65,11 +68,18 @@ struct ProvisioningView: View {
             }
         }
         .sheet(isPresented: $isShowingAdvancedSheet, onDismiss: handleAdvancedSheetDismissal) {
+#if DEBUG
             AdvancedProvisioningSheet(
                 model: model,
                 onRequestConsent: presentConsentFromAdvanced,
                 onShowFixture: showFixtureFromAdvanced
             )
+#else
+            AdvancedProvisioningSheet(
+                model: model,
+                onRequestConsent: presentConsentFromAdvanced
+            )
+#endif
         }
         .confirmationDialog(
             toolConsentTitle,
@@ -88,6 +98,7 @@ struct ProvisioningView: View {
         } message: {
             Text(toolConsentMessage)
         }
+#if DEBUG
         .confirmationDialog(
             "Prepare the fixture project?",
             isPresented: $model.isShowingFixtureConsent,
@@ -103,6 +114,7 @@ struct ProvisioningView: View {
         } message: {
             Text("Dev Manager will create or reuse only its owned fixture project under Application Support. It will not install or change any tools.")
         }
+#endif
         .confirmationDialog(
             "Configure the optional ~/.zshrc block?",
             isPresented: $model.isShowingShellConfigurationConsent,
@@ -116,7 +128,7 @@ struct ProvisioningView: View {
                 pendingConsent = nil
             }
         } message: {
-            Text("After your consent, Dev Manager will back up an existing regular ~/.zshrc, or record that it was absent, then append one marked block using the detected absolute fnm executable and its safely quoted parent directory on PATH. It will refuse symlinks, conflicting initialization, invalid or changed owned content, and never edit ~/.zprofile. This is optional and not needed by the fixture.")
+            Text("After your consent, Dev Manager will back up an existing regular ~/.zshrc, or record that it was absent, then append one marked block using the detected absolute fnm executable and its safely quoted parent directory on PATH. It will refuse symlinks, conflicting initialization, invalid or changed owned content, and never edit ~/.zprofile. This is optional and does not change project files.")
         }
         .confirmationDialog(
             "Restore the optional ~/.zshrc block?",
@@ -154,8 +166,10 @@ struct ProvisioningView: View {
         switch pendingConsent {
         case let .tool(id):
             return toolEffect(for: id)
+#if DEBUG
         case .prepareFixture:
             return "Prepare only the owned fixture project."
+#endif
         case .configureShell, .restoreShell:
             return "Review this optional shell action before continuing."
         }
@@ -178,9 +192,10 @@ struct ProvisioningView: View {
         case .fnm:
             return "Dev Manager will install fnm through the already verified Homebrew installation only. It will not install Node or pnpm, and will not edit shell files."
         case .node:
-            return "Dev Manager will install Node \(ProvisioningModel.nodeVersion) through the already verified fnm installation only. It will not install fnm or pnpm."
+            return "Dev Manager will install the recommended Node \(ProvisioningRuntimePolicy.recommendedNodeVersion) through the already verified fnm installation only because no usable supported Node was detected. It will not replace an accepted existing Node or install pnpm."
         case .pnpm:
-            return "Dev Manager will install pnpm \(ProvisioningModel.pnpmVersion) inside the already verified Node \(ProvisioningModel.nodeVersion) runtime only."
+            let selectedNode = model.runtimeContext?.nodeVersion ?? "the selected Node context"
+            return "Dev Manager will install the recommended pnpm \(ProvisioningRuntimePolicy.recommendedPnpmVersion) inside the selected Node \(selectedNode) context only because pnpm is missing. It will not replace an existing usable pnpm."
         }
     }
 
@@ -189,8 +204,10 @@ struct ProvisioningView: View {
         switch consent {
         case .tool:
             model.isShowingToolConsent = true
+#if DEBUG
         case .prepareFixture:
             model.isShowingFixtureConsent = true
+#endif
         case .configureShell:
             model.isShowingShellConfigurationConsent = true
         case .restoreShell:
@@ -203,27 +220,33 @@ struct ProvisioningView: View {
         isShowingAdvancedSheet = false
     }
 
+#if DEBUG
     private func showFixtureFromAdvanced() {
         guard let fixtureURL = model.fixtureURL, let fixtureCommand = model.fixtureCommand else { return }
         pendingConsent = nil
         pendingFixtureHandoff = FixtureHandoff(url: fixtureURL, command: fixtureCommand)
         isShowingAdvancedSheet = false
     }
+#endif
 
     private func handleAdvancedSheetDismissal() {
         guard let consent = pendingConsent else {
+#if DEBUG
             if let fixture = pendingFixtureHandoff {
                 pendingFixtureHandoff = nil
                 onFixtureReady(fixture.url, fixture.command)
                 dismiss()
             }
+#endif
             return
         }
         switch consent {
         case .tool:
             model.isShowingToolConsent = true
+#if DEBUG
         case .prepareFixture:
             model.isShowingFixtureConsent = true
+#endif
         case .configureShell:
             model.isShowingShellConfigurationConsent = true
         case .restoreShell:
@@ -234,11 +257,14 @@ struct ProvisioningView: View {
 
 nonisolated enum ProvisioningConsent: Sendable {
     case tool(ProvisioningCheck.ID)
+#if DEBUG
     case prepareFixture
+#endif
     case configureShell
     case restoreShell
 }
 
+#if DEBUG
 nonisolated struct FixtureHandoff: Sendable {
     let url: URL
     let command: String

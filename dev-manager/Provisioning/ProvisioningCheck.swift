@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 
 nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
@@ -16,8 +15,8 @@ nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
             case .developerTools: return "Apple developer tools"
             case .homebrew: return "Homebrew"
             case .fnm: return "Fast Node Manager (fnm)"
-            case .node: return "Node \(ProvisioningConfiguration.nodeVersion)"
-            case .pnpm: return "pnpm \(ProvisioningConfiguration.pnpmVersion)"
+            case .node: return "Node"
+            case .pnpm: return "pnpm"
             }
         }
     }
@@ -27,12 +26,20 @@ nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
         case waiting(String)
         case unverified(String)
         case ready(String)
+        case notRequired(String)
         case missing(String)
         case attention(String)
 
         nonisolated var isReady: Bool {
             if case .ready = self { return true }
             return false
+        }
+
+        nonisolated var isSatisfied: Bool {
+            switch self {
+            case .ready, .notRequired: return true
+            default: return false
+            }
         }
 
         nonisolated var isMissing: Bool {
@@ -49,6 +56,14 @@ nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
     let id: ID
     let state: State
 
+    /// Ready rows use the concrete version reported by the selected context;
+    /// missing and attention rows intentionally retain the generic tool title.
+    nonisolated var rowTitle: String {
+        guard case let .ready(detail) = state, id == .node || id == .pnpm,
+              let first = detail.firstNonEmptyLine else { return id.title }
+        return first.split(separator: ";", maxSplits: 1).first.map(String.init) ?? id.title
+    }
+
     nonisolated static var all: [ProvisioningCheck] {
         ID.allCases.map { ProvisioningCheck(id: $0, state: .checking) }
     }
@@ -60,13 +75,51 @@ nonisolated struct ProvisioningInspection: Sendable {
     let homebrew: ProvisioningCheck
     let fnm: ProvisioningCheck
     let fnmExecutableURL: URL?
+    let chosenFNMDirectoryURL: URL?
     let node: ProvisioningCheck
     let pnpm: ProvisioningCheck
+    let runtimeContext: ProvisioningRuntimeContext?
+
+    nonisolated init(
+        developerTools: ProvisioningCheck,
+        developerToolsExecutableURL: URL?,
+        homebrew: ProvisioningCheck,
+        fnm: ProvisioningCheck,
+        fnmExecutableURL: URL?,
+        chosenFNMDirectoryURL: URL?,
+        node: ProvisioningCheck,
+        pnpm: ProvisioningCheck,
+        runtimeContext: ProvisioningRuntimeContext?
+    ) {
+        self.developerTools = developerTools
+        self.developerToolsExecutableURL = developerToolsExecutableURL
+        self.homebrew = homebrew
+        self.fnm = fnm
+        self.fnmExecutableURL = fnmExecutableURL
+        self.chosenFNMDirectoryURL = chosenFNMDirectoryURL
+        self.node = node
+        self.pnpm = pnpm
+        self.runtimeContext = runtimeContext
+    }
 }
 
 nonisolated struct ProvisioningTargetedInspection: Sendable {
     let checks: [ProvisioningCheck]
     let fnmExecutableURL: URL?
+    let chosenFNMDirectoryURL: URL?
+    let runtimeContext: ProvisioningRuntimeContext?
+
+    nonisolated init(
+        checks: [ProvisioningCheck],
+        fnmExecutableURL: URL?,
+        chosenFNMDirectoryURL: URL? = nil,
+        runtimeContext: ProvisioningRuntimeContext?
+    ) {
+        self.checks = checks
+        self.fnmExecutableURL = fnmExecutableURL
+        self.chosenFNMDirectoryURL = chosenFNMDirectoryURL
+        self.runtimeContext = runtimeContext
+    }
 }
 
 extension String {
@@ -81,4 +134,3 @@ extension String {
             .contains(expected)
     }
 }
-#endif

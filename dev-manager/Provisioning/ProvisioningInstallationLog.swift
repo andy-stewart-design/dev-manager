@@ -1,4 +1,3 @@
-#if DEBUG
 import Darwin
 import Foundation
 
@@ -303,4 +302,3 @@ nonisolated enum ProvisioningInstallationLog {
         }
     }
 }
-#endif

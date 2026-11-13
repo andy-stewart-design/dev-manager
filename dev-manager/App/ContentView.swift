@@ -6,9 +6,7 @@ struct ContentView: View {
     @ObservedObject var runner: ProjectRunner
     @State private var selectedProjectID: UUID?
     @State private var isShowingFolderPicker = false
-#if DEBUG
     @State private var isShowingProvisioning = false
-#endif
 
     var body: some View {
         NavigationSplitView {
@@ -44,7 +42,6 @@ struct ContentView: View {
             allowsMultipleSelection: false,
             onCompletion: handleFolderSelection
         )
-#if DEBUG
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -52,15 +49,18 @@ struct ContentView: View {
                 } label: {
                     Label("Setup", systemImage: "wrench.and.screwdriver")
                 }
-                .help("Open development-only tool setup diagnostics")
+                .help("Open tool setup and diagnostics")
             }
         }
         .sheet(isPresented: $isShowingProvisioning) {
+#if DEBUG
             ProvisioningView { folderURL, command in
                 handleFixtureHandoff(folderURL: folderURL, command: command)
             }
-        }
+#else
+            ProvisioningView()
 #endif
+        }
         .onChange(of: store.projects) { _, projects in
             if let selectedProjectID, projects.contains(where: { $0.id == selectedProjectID }) {
                 return

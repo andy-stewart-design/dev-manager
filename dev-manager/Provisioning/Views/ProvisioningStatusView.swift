@@ -1,4 +1,3 @@
-#if DEBUG
 import SwiftUI
 
 struct ProvisioningStatusView: View {
@@ -83,18 +82,18 @@ struct ProvisioningStatusView: View {
 
     private var optionalShellRow: some View {
         let inspection = model.shellInspection
-        let (detail, isConfigured, isConflict) = shellPresentation(inspection)
+        let presentation = shellPresentation(inspection)
         return rowLayout(
             leadingStatus: {
-                Image(systemName: isConflict ? "exclamationmark.triangle.fill" : (isConfigured ? "checkmark.circle.fill" : "circle.dashed"))
-                    .foregroundStyle(isConflict ? Color.orange : (isConfigured ? Color.green : Color.secondary))
-                    .accessibilityLabel(isConflict ? "Needs attention" : (isConfigured ? "Ready" : "Optional and not configured"))
+                Image(systemName: presentation.icon)
+                    .foregroundStyle(presentation.color)
+                    .accessibilityLabel(presentation.accessibilityLabel)
             },
             titleInfo: {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("Optional shell configuration")
                         .fontWeight(.medium)
-                    ProvisioningInfoButton(title: "Optional shell configuration", detail: detail)
+                    ProvisioningInfoButton(title: "Optional shell configuration", detail: presentation.detail)
                 }
             },
             details: {
@@ -107,17 +106,24 @@ struct ProvisioningStatusView: View {
                     }
                     .buttonStyle(.bordered)
                     .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
-                    .help("Optionally add the app-owned fnm block to ~/.zshrc. This is not required for the fixture.")
+                    .help("Optionally add the app-owned fnm block to ~/.zshrc for future interactive Zsh sessions.")
                 }
             }
         )
     }
 
-    private func shellPresentation(_ inspection: ProvisioningShellConfiguration.Inspection) -> (detail: String, isConfigured: Bool, isConflict: Bool) {
+    private func shellPresentation(_ inspection: ProvisioningShellConfiguration.Inspection) -> (detail: String, icon: String, color: Color, accessibilityLabel: String) {
         switch inspection {
-        case let .configured(message): return (message, true, false)
-        case let .notConfigured(message): return (message, false, false)
-        case let .conflict(message): return (message, false, true)
+        case let .configured(message):
+            return (message, "checkmark.circle.fill", .green, "App-managed and ready")
+        case let .configuredExternally(message):
+            return (message, "checkmark.circle.fill", .green, "Recognized external setup")
+        case let .notConfigured(message):
+            return (message, "circle.dashed", .secondary, "Optional and not configured")
+        case let .unverified(message):
+            return (message, "questionmark.circle", .secondary, "Shell setup is unverified")
+        case let .conflict(message):
+            return (message, "exclamationmark.triangle.fill", .orange, "Needs attention")
         }
     }
 
@@ -135,7 +141,14 @@ struct ProvisioningStatusView: View {
     @ViewBuilder
     private func statusRow(for id: ProvisioningCheck.ID, indented: Bool = false) -> some View {
         if let check = model.checks.first(where: { $0.id == id }) {
-            statusRow(title: id.title, state: check.state, detail: detail(for: check.state), id: id, indented: indented)
+            statusRow(
+                title: id.title,
+                state: check.state,
+                detail: detail(for: check.state),
+                id: id,
+                indented: indented,
+                version: version(for: id, state: check.state)
+            )
         }
     }
 
@@ -147,7 +160,8 @@ struct ProvisioningStatusView: View {
         id: ProvisioningCheck.ID? = nil,
         indented: Bool = false,
         showInfo: Bool = true,
-        bottomPadding: CGFloat? = nil
+        bottomPadding: CGFloat? = nil,
+        version: String? = nil
     ) -> some View {
         let action = id.map { model.rowAction(for: $0) }
         rowLayout(
@@ -161,6 +175,12 @@ struct ProvisioningStatusView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(title)
                         .fontWeight(.medium)
+                    if let version {
+                        Text(version)
+                            .font(.callout)
+                            .fontWeight(.regular)
+                            .foregroundStyle(.secondary)
+                    }
                     if showInfo {
                         ProvisioningInfoButton(title: title, detail: detail)
                     }
@@ -250,7 +270,12 @@ struct ProvisioningStatusView: View {
 
     private var runtimeEnvironmentState: ProvisioningCheck.State {
         let states = [checkState(for: .fnm), checkState(for: .node), checkState(for: .pnpm)]
-        if states.allSatisfy(\.isReady) { return .ready("All three components are ready.") }
+        if states.allSatisfy(\.isSatisfied) {
+            if case .notRequired = checkState(for: .fnm) {
+                return .ready("Node and pnpm are ready; fnm is optional for this existing unmanaged pair.")
+            }
+            return .ready("All runtime components are ready.")
+        }
         if states.contains(where: isActionable) { return .attention("One or more components needs attention.") }
         if states.contains(where: isStateChecking) { return .checking }
         if states.contains(where: isStateWaiting) { return .waiting("Waiting for a prerequisite check.") }
@@ -262,7 +287,16 @@ struct ProvisioningStatusView: View {
         let details = [ProvisioningCheck.ID.fnm, .node, .pnpm].compactMap { id in
             model.checks.first(where: { $0.id == id }).map { "\(id.title): \(detail(for: $0.state))" }
         }
-        return details.isEmpty ? "fnm, Node, and pnpm must all be ready." : details.joined(separator: "\n")
+        return details.isEmpty ? "Node and pnpm must be ready; fnm is optional only when an existing unmanaged pair is usable." : details.joined(separator: "\n")
+    }
+
+    private func version(for id: ProvisioningCheck.ID, state: ProvisioningCheck.State) -> String? {
+        guard state.isReady else { return nil }
+        switch id {
+        case .node: return model.runtimeContext?.nodeVersion
+        case .pnpm: return model.runtimeContext?.pnpmVersion
+        default: return nil
+        }
     }
 
     private func checkState(for id: ProvisioningCheck.ID) -> ProvisioningCheck.State {
@@ -272,7 +306,7 @@ struct ProvisioningStatusView: View {
     private func detail(for state: ProvisioningCheck.State) -> String {
         switch state {
         case .checking: return "The app is checking this requirement."
-        case let .waiting(detail), let .unverified(detail), let .ready(detail), let .missing(detail), let .attention(detail): return detail
+        case let .waiting(detail), let .unverified(detail), let .ready(detail), let .notRequired(detail), let .missing(detail), let .attention(detail): return detail
         }
     }
 
@@ -296,7 +330,7 @@ struct ProvisioningStatusView: View {
         return false
     }
 
-    @ViewBuilder
+     @ViewBuilder
     private func statusIcon(for state: ProvisioningCheck.State) -> some View {
         switch state {
         case .waiting:
@@ -305,6 +339,8 @@ struct ProvisioningStatusView: View {
             Image(systemName: "ellipsis.circle")
         case .ready:
             Image(systemName: "checkmark.circle.fill")
+        case .notRequired:
+            Image(systemName: "minus.circle")
         case .unverified:
             Image(systemName: "circle.dashed")
         case .missing:
@@ -320,6 +356,7 @@ struct ProvisioningStatusView: View {
         case .waiting: return "Waiting for external installer"
         case .unverified: return "Not yet verified"
         case .ready: return "Ready"
+        case .notRequired: return "Optional; not required for the usable existing runtime"
         case .missing: return "Missing"
         case .attention: return "Needs attention"
         }
@@ -327,7 +364,7 @@ struct ProvisioningStatusView: View {
 
     private func color(for state: ProvisioningCheck.State) -> Color {
         switch state {
-        case .checking, .waiting, .unverified, .missing: return .secondary
+        case .checking, .waiting, .unverified, .notRequired, .missing: return .secondary
         case .ready: return .green
         case .attention: return .orange
         }
@@ -366,4 +403,3 @@ struct ProvisioningInfoButton: View {
         }
     }
 }
-#endif

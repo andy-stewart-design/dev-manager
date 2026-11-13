@@ -1,4 +1,3 @@
-#if DEBUG
 import Darwin
 import Foundation
 
@@ -478,4 +477,3 @@ nonisolated enum ProvisioningCommandRunner {
         }
     }
 }
-#endif
