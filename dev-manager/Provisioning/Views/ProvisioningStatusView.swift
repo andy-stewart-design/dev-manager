@@ -301,18 +301,12 @@ struct ProvisioningStatusView: View {
         switch state {
         case .waiting:
             Image(systemName: "hourglass")
-        case .unverified:
-            ZStack {
-                Circle()
-                    .stroke(style: StrokeStyle(lineWidth: 1.25, dash: [2, 2]))
-                    .frame(width: 15, height: 15)
-                Text("?")
-                    .font(.system(size: 10, weight: .semibold))
-            }
         case .checking:
             Image(systemName: "ellipsis.circle")
         case .ready:
             Image(systemName: "checkmark.circle.fill")
+        case .unverified:
+            Image(systemName: "circle.dashed")
         case .missing:
             Image(systemName: "circle.dashed")
         case .attention:
