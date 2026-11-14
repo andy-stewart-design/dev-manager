@@ -5,6 +5,9 @@ import Foundation
 /// and DEBUG fixture handoff. It deliberately models only fnm's own data directory;
 /// no project metadata or shell startup files are consulted.
 nonisolated struct ProvisioningFNMRootEvidence: Equatable, Sendable {
+    /// Evidence of a managed default, or uncertainty about a managed default.
+    /// Intentional external/system aliases do not count as configured defaults
+    /// for root precedence.
     let hasConfiguredDefault: Bool
     let hasInstalledInventory: Bool
 
@@ -48,13 +51,21 @@ nonisolated struct ProvisioningFNMRootEvidence: Equatable, Sendable {
     }
 
     fileprivate var priority: Int {
-        hasConfiguredDefault ? 2 : (hasInstalledInventory ? 1 : 0)
+        // A configured, broken, or uncertain managed alias must outrank a
+        // merely populated alternate root, so inspection can report attention
+        // instead of silently changing roots. External aliases intentionally
+        // fall through to inventory priority.
+        (hasConfiguredDefault || defaultAlias == .broken || defaultAlias == .unknown) ? 2 : (hasInstalledInventory ? 1 : 0)
     }
 }
 
 nonisolated enum ProvisioningFNMContext {
     nonisolated static let maximumRootCandidates = 4
 
+    /// Returns roots in discovery order, then applies the authoritative root
+    /// policy: FNM_DIR, then XDG_DATA_HOME/fnm, otherwise the implicit macOS
+    /// and legacy roots ranked by filesystem evidence. The first result is the
+    /// only root runtime inspection may use; later roots are evidence only.
     nonisolated static func candidateDataRoots(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
@@ -63,6 +74,14 @@ nonisolated enum ProvisioningFNMContext {
         let explicit = nonEmptyURL(environment["FNM_DIR"])
         let xdgRoot = nonEmptyURL(environment["XDG_DATA_HOME"])?.appendingPathComponent("fnm", isDirectory: true)
         return orderedDataRoots(explicitFNMDirectory: explicit, xdgFNMDirectory: xdgRoot, homeDirectory: homeDirectory, evidence: evidence)
+    }
+
+    nonisolated static func authoritativeDataRoot(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+        evidence: [URL: ProvisioningFNMRootEvidence] = [:]
+    ) -> URL? {
+        candidateDataRoots(environment: environment, homeDirectory: homeDirectory, evidence: evidence).first
     }
 
     nonisolated static func orderedDataRoots(
@@ -105,14 +124,14 @@ nonisolated enum ProvisioningFNMContext {
         case .missing:
             return ProvisioningFNMRootEvidence(inventory: .knownEmpty, defaultAlias: .absent)
         case .unreadable:
-            return ProvisioningFNMRootEvidence(inventory: .unknown, defaultAlias: .unknown, rootReadable: false)
+            return ProvisioningFNMRootEvidence(hasConfiguredDefault: true, inventory: .unknown, defaultAlias: .unknown, rootReadable: false)
         case .broken, .regular:
-            return ProvisioningFNMRootEvidence(inventory: .unknown, defaultAlias: .broken, rootReadable: false)
+            return ProvisioningFNMRootEvidence(hasConfiguredDefault: true, inventory: .unknown, defaultAlias: .broken, rootReadable: false)
         case .directory:
             break
         }
         guard directoryReadable(root.path), (try? FileManager.default.contentsOfDirectory(atPath: root.path)) != nil else {
-            return ProvisioningFNMRootEvidence(inventory: .unknown, defaultAlias: .unknown, rootReadable: false)
+            return ProvisioningFNMRootEvidence(hasConfiguredDefault: true, inventory: .unknown, defaultAlias: .unknown, rootReadable: false)
         }
 
         let inventoryURL = root.appendingPathComponent("node-versions", isDirectory: true)
@@ -121,7 +140,15 @@ nonisolated enum ProvisioningFNMContext {
         let versions: [String]
         if case let .knownVersions(values) = inventory { versions = values } else { versions = [] }
         return ProvisioningFNMRootEvidence(
-            hasConfiguredDefault: alias.version != nil,
+            // Managed, broken, and unknown aliases preserve this root's
+            // configured-default precedence. An intentional external/system
+            // alias is not a managed default and must retain prior priority.
+            hasConfiguredDefault: {
+                switch alias.state {
+                case .managed, .broken, .unknown: return true
+                case .external, .absent: return false
+                }
+            }(),
             hasInstalledInventory: !versions.isEmpty,
             inventory: inventory,
             defaultAlias: alias.state,

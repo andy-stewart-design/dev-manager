@@ -330,13 +330,34 @@ nonisolated enum ProvisioningInspector {
         budget: RuntimeInspectionBudget,
         run: @escaping @Sendable (URL, [String], [String: String], TimeInterval) async -> ProvisioningProcessResult?,
         filesystemFacts: @escaping @Sendable (URL) -> ProvisioningFNMRootEvidence,
-        executableAvailable: @escaping @Sendable (URL) -> Bool
+        executableAvailable: @escaping @Sendable (URL) -> Bool,
+        rootEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     ) async -> RuntimeObservation {
         guard let fnmURL else { return RuntimeObservation(pair: nil, nodeContext: nil, pnpmObservation: nil, nodeAttention: nil) }
 
-        let initialRoots = ProvisioningFNMContext.candidateDataRoots()
+        // Discover every legitimate root and collect bounded evidence before
+        // selecting one. Root precedence is explicit and authoritative: an
+        // explicit FNM_DIR or XDG root is exclusive; otherwise filesystem
+        // evidence ranks the implicit roots. Probing never crosses that choice.
+        let initialRoots = ProvisioningFNMContext.candidateDataRoots(
+            environment: rootEnvironment,
+            homeDirectory: homeDirectory
+        )
         let evidence = Dictionary(uniqueKeysWithValues: initialRoots.map { ($0, filesystemFacts($0)) })
-        let roots = ProvisioningFNMContext.candidateDataRoots(evidence: evidence)
+        guard let authoritativeRoot = ProvisioningFNMContext.authoritativeDataRoot(
+            environment: rootEnvironment,
+            homeDirectory: homeDirectory,
+            evidence: evidence
+        ) else {
+            return RuntimeObservation(
+                pair: nil,
+                nodeContext: nil,
+                pnpmObservation: nil,
+                nodeAttention: "Could not discover an fnm data root."
+            )
+        }
+        let roots = [authoritativeRoot]
         var probes = [FNMRootProbe]()
         var budgetExhausted = false
         var firstAttention: String?
@@ -372,7 +393,14 @@ nonisolated enum ProvisioningInspector {
                 guard let inventoryResult = await run(fnmURL, ["list"], environment, budget.remainingTimeout ?? 0) else {
                     budgetExhausted = true
                     rootAttention = "fnm's Node inventory check timed out before the local root could be inspected."
-                    probes.append(FNMRootProbe(root: root, inventory: .unavailable, inventoryVersions: inventoryVersions, defaultState: facts.defaultAlias == .absent ? .absent : .unknown, filesystemFacts: facts, attention: rootAttention))
+                    let state: FNMDefaultState = {
+                        switch facts.defaultAlias {
+                        case .absent: return .absent
+                        case .broken: return .broken
+                        default: return .unknown
+                        }
+                    }()
+                    probes.append(FNMRootProbe(root: root, inventory: .unavailable, inventoryVersions: inventoryVersions, defaultState: state, filesystemFacts: facts, attention: rootAttention))
                     break
                 }
                 if inventoryResult.succeeded {
@@ -395,6 +423,12 @@ nonisolated enum ProvisioningInspector {
                 // An outside-store alias is already authoritatively unmanaged;
                 // do not turn an unnecessary default rendering into a warning.
                 state = .unmanaged
+            } else if facts.defaultAlias == .broken {
+                // A present broken alias is not absence. Do not let a successful
+                // or failed human-oriented fnm rendering turn it into a reason
+                // to select another installed version.
+                state = .broken
+                rootAttention = rootAttention ?? "fnm's configured default is malformed or points outside its managed store."
             } else {
                 guard let defaultProbe = await run(fnmURL, ["default"], environment, budget.remainingTimeout ?? 0) else {
                     budgetExhausted = true
@@ -478,11 +512,13 @@ nonisolated enum ProvisioningInspector {
             )
             bestPnpm = betterPnpmObservation(bestPnpm, observation)
             let nodeAttention: String?
-            if ProvisioningRuntimePolicy.isSupportedNodeVersion(node.version) {
-                nodeAttention = nil
-            } else {
-                nodeAttention = "fnm's configured default is Node \(node.version), outside supported stable majors 22, 24, and 26; it was not replaced."
-            }
+            let unsupportedDefaultAttention: String? = ProvisioningRuntimePolicy.isSupportedNodeVersion(node.version)
+                ? nil
+                : "fnm's configured default is Node \(node.version), outside supported stable majors 22, 24, and 26; it was not replaced."
+            let combinedAttention = [probe.attention, unsupportedDefaultAttention]
+                .compactMap { $0 }
+                .joined(separator: "; ")
+            nodeAttention = combinedAttention.isEmpty ? nil : combinedAttention
             if let pnpmVersion = observation.version, let pnpmURL = observation.executableURL,
                ProvisioningRuntimePolicy.supportsPair(nodeVersion: context.nodeVersion, pnpmVersion: pnpmVersion) {
                 return RuntimeObservation(
@@ -602,7 +638,7 @@ nonisolated enum ProvisioningInspector {
                         ),
                         nodeContext: context,
                         pnpmObservation: observation,
-                        nodeAttention: nil,
+                        nodeAttention: probe.attention,
                         nodeNote: probe.defaultState == .unmanaged ? "fnm's unmanaged default was not changed; this existing managed Node was selected" : nil,
                         chosenFNMDirectoryURL: probe.root
                     )
@@ -616,9 +652,13 @@ nonisolated enum ProvisioningInspector {
         }
 
         let attention: String?
-        if firstNode != nil {
-            // A failure in another root is not evidence against the concrete
-            // managed Node selected from this root.
+        if let selectedRoot = firstNode?.chosenFNMDirectoryURL,
+           let selectedRootAttention = probes.first(where: { $0.root == selectedRoot })?.attention {
+            // The selected root is authoritative. Preserve its unreadability or
+            // incomplete-inventory evidence even when a usable fallback Node was
+            // found; there are no alternate roots whose failures should leak in.
+            attention = selectedRootAttention
+        } else if firstNode != nil {
             attention = nil
         } else if let rootAttention = probes.compactMap(\.attention).first {
             attention = rootAttention
