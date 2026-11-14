@@ -19,10 +19,11 @@ struct ProvisioningModelDependencies {
     let installPnpm: @Sendable (ProvisioningRuntimeContext) async -> ProvisioningProcessResult
     let recordInstallation: InstallationRecorder
 
-    nonisolated init(
+    @MainActor
+    init(
         inspect: @escaping @Sendable () async -> ProvisioningInspection = { await ProvisioningInspector.inspect() },
         inspectTarget: @escaping @Sendable (ProvisioningCheck.ID) async -> ProvisioningTargetedInspection = { await ProvisioningInspector.inspect(target: $0) },
-        requestCommandLineTools: @escaping CommandLineToolsRequester = ProvisioningModelDependencies.defaultCommandLineToolsRequester,
+        requestCommandLineTools: CommandLineToolsRequester? = nil,
         downloadHomebrew: @escaping HomebrewDownloader = { try await HomebrewPackageInstaller.downloadPackage(onDownloadReady: $0) },
         openHomebrewPackage: @escaping @MainActor @Sendable (URL) -> Bool = { HomebrewPackageInstaller.openPackage($0) },
         installFNM: @escaping @Sendable () async -> ProvisioningProcessResult = { await ProvisioningRuntimeInstaller.installFNM() },
@@ -34,7 +35,7 @@ struct ProvisioningModelDependencies {
     ) {
         self.inspect = inspect
         self.inspectTarget = inspectTarget
-        self.requestCommandLineTools = requestCommandLineTools
+        self.requestCommandLineTools = requestCommandLineTools ?? Self.defaultCommandLineToolsRequester
         self.downloadHomebrew = downloadHomebrew
         self.openHomebrewPackage = openHomebrewPackage
         self.installFNM = installFNM
@@ -191,8 +192,9 @@ final class ProvisioningModel: ObservableObject {
     /// installed into the exact root selected by read-only fnm inspection.
     private(set) var chosenFNMDirectoryURL: URL?
 
-    init(dependencies: ProvisioningModelDependencies = ProvisioningModelDependencies()) {
-        self.dependencies = dependencies
+    @MainActor
+    init(dependencies: ProvisioningModelDependencies? = nil) {
+        self.dependencies = dependencies ?? ProvisioningModelDependencies()
     }
 
     var supportedEnvironmentIssue: String? { Self.environmentIssue }

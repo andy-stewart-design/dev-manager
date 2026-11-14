@@ -56,7 +56,7 @@ struct ProvisioningModelOperationTests {
                 await preflightGate.wait()
             },
             installFNM: { await installGate.wait() },
-            recordInstallation: recorder.record
+            recordInstallation: { label, result in recorder.record(label, result) }
         )
         let model = ProvisioningModel(dependencies: dependencies)
         let fullTask = Task { await model.checkAgain() }
@@ -89,7 +89,7 @@ struct ProvisioningModelOperationTests {
         await preflightGate.resolve(targetedInspection(.fnm, fnmState: .ready("fnm ready"), fnmURL: URL(fileURLWithPath: "/tmp/fnm")))
         await installTask.value
         #expect(model.operationState == nil)
-        #expect(await recorder.value == 1)
+        #expect(recorder.value == 1)
         #expect(model.installationLogURL == recorder.url)
     }
 
@@ -202,7 +202,7 @@ struct ProvisioningModelOperationTests {
                 _ = await installCalls.next()
                 return await installGate.wait()
             },
-            recordInstallation: recorder.record
+            recordInstallation: { label, result in recorder.record(label, result) }
         )
         let model = ProvisioningModel(dependencies: dependencies)
         let fullTask = Task { await model.checkAgain() }
@@ -230,7 +230,7 @@ struct ProvisioningModelOperationTests {
         await cancelled.value
         #expect(model.operationState == nil)
         #expect(!model.isBusy)
-        #expect(await recorder.value == 0)
+        #expect(recorder.value == 0)
         #expect(model.installationFailureLogURL == nil)
     }
 
@@ -338,7 +338,7 @@ struct ProvisioningModelOperationTests {
                 await installStarted.signal()
                 return successfulProcess()
             },
-            recordInstallation: recorder.record
+            recordInstallation: { label, result in recorder.record(label, result) }
         )
         let model = ProvisioningModel(dependencies: dependencies)
         await model.checkAgain()
@@ -359,7 +359,7 @@ struct ProvisioningModelOperationTests {
         #expect(model.checks == checksBeforeCancellation)
         #expect(model.checks.first(where: { $0.id == .fnm })?.state == .missing("preflight missing"))
         #expect(model.runtimeContext == nil)
-        #expect(await recorder.value == 1)
+        #expect(recorder.value == 1)
 
         let current = Task { await model.checkTool(.fnm) }
         await targetProbe.waitUntilStarted(3)
@@ -378,7 +378,7 @@ struct ProvisioningModelOperationTests {
             inspect: { await fullGate.wait() },
             inspectTarget: { _ in await targetGate.wait() },
             installFNM: { await installGate.wait() },
-            recordInstallation: recorder.record
+            recordInstallation: { label, result in recorder.record(label, result) }
         )
         let model = ProvisioningModel(dependencies: dependencies)
         let fullTask = Task { await model.checkAgain() }
@@ -394,7 +394,7 @@ struct ProvisioningModelOperationTests {
         await installTask.value
         #expect(model.operationState == nil)
         #expect(model.messagePresentation?.isError == true)
-        #expect(await recorder.value == 1)
+        #expect(recorder.value == 1)
         #expect(model.installationFailureLogURL == recorder.url)
     }
 }
