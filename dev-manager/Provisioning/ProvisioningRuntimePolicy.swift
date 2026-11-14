@@ -58,7 +58,7 @@ nonisolated enum ProvisioningRuntimePolicy {
         let relative = Array(executableComponents.dropFirst(rootComponents.count))
         guard relative[0] == "node-versions",
               relative[1].hasPrefix("v"),
-              normalizedVersion(String(relative[1].dropFirst())) != nil,
+              normalizedRuntimeVersion(String(relative[1].dropFirst())) != nil,
               relative[2] == "installation" else { return false }
         return relative[3] == "bin" && relative[4] == "node"
     }
@@ -82,6 +82,92 @@ nonisolated enum ProvisioningRuntimePolicy {
         let numbers = base.split(separator: ".", omittingEmptySubsequences: false)
         guard numbers.count >= 3, numbers.allSatisfy({ Int($0) != nil }) else { return nil }
         return numbers.prefix(3).joined(separator: ".")
+    }
+
+    /// Normalizes a concrete runtime version without discarding prerelease
+    /// information. `normalizedVersion` is intentionally lossy for store and
+    /// support-family comparisons; probe results must use this form instead.
+    nonisolated static func normalizedRuntimeVersion(_ version: String) -> String? {
+        let value = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutPrefix = value.hasPrefix("v") ? String(value.dropFirst()) : value
+        guard !withoutPrefix.isEmpty else { return nil }
+
+        let plusParts = withoutPrefix.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false)
+        guard plusParts.count <= 2, let main = plusParts.first, !main.isEmpty else { return nil }
+        let mainParts = main.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        guard let base = mainParts.first, !base.isEmpty else { return nil }
+        let numbers = base.split(separator: ".", omittingEmptySubsequences: false)
+        guard numbers.count == 3,
+              numbers.allSatisfy({ validNumericVersionComponent(String($0)) }) else { return nil }
+
+        if mainParts.count == 2 {
+            let identifiers = mainParts[1].split(separator: ".", omittingEmptySubsequences: false)
+            guard !identifiers.isEmpty,
+                  identifiers.allSatisfy({ validRuntimeIdentifier(String($0), disallowLeadingZeroNumeric: true) }) else { return nil }
+        }
+        if plusParts.count == 2 {
+            let identifiers = plusParts[1].split(separator: ".", omittingEmptySubsequences: false)
+            guard !identifiers.isEmpty,
+                  identifiers.allSatisfy({ validRuntimeIdentifier(String($0), disallowLeadingZeroNumeric: false) }) else { return nil }
+        }
+        return withoutPrefix
+    }
+
+    private nonisolated static func validNumericVersionComponent(_ component: String) -> Bool {
+        let scalars = Array(component.unicodeScalars)
+        guard !scalars.isEmpty,
+              scalars.allSatisfy({ $0.value >= 48 && $0.value <= 57 }) else { return false }
+        return scalars.count == 1 || scalars[0].value != 48
+    }
+
+    private nonisolated static func validRuntimeIdentifier(_ identifier: String, disallowLeadingZeroNumeric: Bool) -> Bool {
+        let scalars = Array(identifier.unicodeScalars)
+        guard !scalars.isEmpty,
+              scalars.allSatisfy({
+                  ($0.value >= 48 && $0.value <= 57) ||
+                  ($0.value >= 65 && $0.value <= 90) ||
+                  ($0.value >= 97 && $0.value <= 122) ||
+                  $0.value == 45
+              }) else { return false }
+        if disallowLeadingZeroNumeric,
+           scalars.allSatisfy({ $0.value >= 48 && $0.value <= 57 }),
+           scalars.count > 1,
+           scalars[0].value == 48 {
+            return false
+        }
+        return true
+    }
+
+    nonisolated static func expectedManagedNodeExecutable(
+        for selector: String,
+        within root: URL,
+        executableAvailable: @Sendable (URL) -> Bool
+    ) -> (url: URL?, failure: String?) {
+        guard let normalized = normalizedRuntimeVersion(selector) else {
+            return (nil, "fnm candidate \(selector) is not a concrete semantic version.")
+        }
+        let expected = root.appendingPathComponent("node-versions/v\(normalized)/installation/bin/node")
+        let canonicalExpected = expected.resolvingSymlinksInPath().standardizedFileURL
+        guard isManagedNodeExecutable(expected, within: root),
+              executableAvailable(expected),
+              managedNodeStoreVersion(canonicalExpected, within: root) == normalized else {
+            return (nil, "fnm candidate \(normalized) has no executable in its managed node-versions store.")
+        }
+        return (expected, nil)
+    }
+
+    nonisolated static func managedNodeStoreVersion(_ executable: URL, within root: URL) -> String? {
+        let rootComponents = root.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        let executableComponents = executable.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        guard executableComponents.count == rootComponents.count + 5,
+              Array(executableComponents.prefix(rootComponents.count)) == rootComponents else { return nil }
+        let relative = Array(executableComponents.dropFirst(rootComponents.count))
+        guard relative[0] == "node-versions",
+              relative[1].hasPrefix("v"),
+              relative[2] == "installation",
+              relative[3] == "bin",
+              relative[4] == "node" else { return nil }
+        return normalizedRuntimeVersion(String(relative[1].dropFirst()))
     }
 
     nonisolated static func displayVersion(_ version: String) -> String {
@@ -116,6 +202,66 @@ nonisolated enum ProvisioningRuntimePolicy {
         if plusFree.contains(where: { $0 == "-" }) { return .prerelease }
         guard normalizedVersion(value) != nil else { return .unusable }
         return supportedMajors.contains(major) ? .supported(major: major) : .unsupported
+    }
+}
+
+nonisolated struct ProvisioningManagedNode: Equatable, Sendable {
+    let version: String
+    let executableURL: URL
+
+    private init(version: String, executableURL: URL) {
+        self.version = version
+        self.executableURL = executableURL
+    }
+
+    /// Creates the only Node value that runtime inspection may hand to the
+    /// model. The selector, store path, reported version, and canonical binary
+    /// must all describe the same concrete managed installation.
+    nonisolated static func validated(
+        reportedVersion: String,
+        actualExecutablePath: String,
+        selector: String,
+        expectedExecutableURL: URL,
+        root: URL,
+        executableAvailable: @Sendable (URL) -> Bool
+    ) -> (node: ProvisioningManagedNode?, failure: String?) {
+        // Keep the probe's raw path as data until this invariant is checked.
+        // URL(fileURLWithPath:) resolves relative paths against the process cwd.
+        guard !actualExecutablePath.isEmpty, actualExecutablePath.hasPrefix("/") else {
+            return (nil, "Node \(selector) reported a non-absolute executable path.")
+        }
+        let actualExecutableURL = URL(fileURLWithPath: actualExecutablePath)
+        guard let actualVersion = ProvisioningRuntimePolicy.normalizedRuntimeVersion(reportedVersion) else {
+            return (nil, "Node reported an invalid version \(reportedVersion).")
+        }
+        guard let selectedVersion = ProvisioningRuntimePolicy.normalizedRuntimeVersion(selector) else {
+            return (nil, "fnm selector \(selector) is not a concrete semantic version.")
+        }
+        guard let expected = ProvisioningRuntimePolicy.expectedManagedNodeExecutable(
+            for: selector,
+            within: root,
+            executableAvailable: executableAvailable
+        ).url, expected == expectedExecutableURL else {
+            return (nil, "fnm candidate \(selectedVersion) has no executable in its managed node-versions store.")
+        }
+        let canonicalActual = actualExecutableURL.resolvingSymlinksInPath().standardizedFileURL
+        let canonicalExpected = expectedExecutableURL.resolvingSymlinksInPath().standardizedFileURL
+        guard ProvisioningRuntimePolicy.managedNodeStoreVersion(canonicalExpected, within: root) == selectedVersion else {
+            return (nil, "fnm candidate \(selectedVersion) resolved to a different managed store version.")
+        }
+        guard executableAvailable(canonicalActual) else {
+            return (nil, "Node \(selectedVersion) reported a missing or non-executable binary at \(canonicalActual.path).")
+        }
+        guard ProvisioningRuntimePolicy.isManagedNodeExecutable(canonicalActual, within: root) else {
+            return (nil, "Node \(selectedVersion) reported an executable outside its managed node-versions store.")
+        }
+        guard canonicalActual == canonicalExpected else {
+            return (nil, "Node \(selectedVersion) reported a different managed executable at \(canonicalActual.path).")
+        }
+        guard actualVersion == selectedVersion else {
+            return (nil, "Node selector \(selectedVersion) reported version \(actualVersion); the selected managed installation is inconsistent.")
+        }
+        return (ProvisioningManagedNode(version: actualVersion, executableURL: canonicalActual), nil)
     }
 }
 

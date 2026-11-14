@@ -28,6 +28,10 @@ private final class ProvisioningCommandSpy: @unchecked Sendable {
     }
 }
 
+private func isJSONProbe(_ arguments: [String]) -> Bool {
+    arguments.contains { $0.hasPrefix("JSON.stringify(") }
+}
+
 @Suite("Provisioning runtime policy")
 struct ProvisioningRuntimePolicyTests {
     @Test("supports the documented stable Node and pnpm major families")
@@ -96,8 +100,8 @@ struct ProvisioningRuntimePolicyTests {
             evidence: [
                 mac: ProvisioningFNMRootEvidence(
                     hasConfiguredDefault: false,
-                    defaultAlias: .external,
-                    inventory: .knownEmpty
+                    inventory: .knownEmpty,
+                    defaultAlias: .external
                 ),
                 legacy: ProvisioningFNMRootEvidence(
                     hasConfiguredDefault: true,
@@ -211,11 +215,8 @@ struct ProvisioningRuntimePolicyTests {
                 if arguments == ["list"] {
                     return ProvisioningProcessResult(succeeded: true, stdout: "v24.21.0\n", stderr: "", terminationStatus: 0, timedOut: false)
                 }
-                if arguments.contains("--version") && arguments.contains("node") {
-                    return ProvisioningProcessResult(succeeded: true, stdout: "v24.21.0\n", stderr: "", terminationStatus: 0, timedOut: false)
-                }
-                if arguments.contains("process.execPath") {
-                    return ProvisioningProcessResult(succeeded: true, stdout: root.path + "/node-versions/v24.21.0/installation/bin/node\n", stderr: "", terminationStatus: 0, timedOut: false)
+                if isJSONProbe(arguments) {
+                    return ProvisioningProcessResult(succeeded: true, stdout: "{\"version\":\"v24.21.0\",\"execPath\":\"" + root.path + "/node-versions/v24.21.0/installation/bin/node\"}\n", stderr: "", terminationStatus: 0, timedOut: false)
                 }
                 return nil
             },
@@ -253,11 +254,8 @@ struct ProvisioningRuntimePolicyTests {
                 if arguments == ["list"] {
                     return ProvisioningProcessResult(succeeded: true, stdout: "v24.21.0\n", stderr: "", terminationStatus: 0, timedOut: false)
                 }
-                if arguments.contains("--version") && arguments.contains("node") {
-                    return ProvisioningProcessResult(succeeded: true, stdout: "v24.21.0\n", stderr: "", terminationStatus: 0, timedOut: false)
-                }
-                if arguments.contains("process.execPath") {
-                    return ProvisioningProcessResult(succeeded: true, stdout: root.path + "/node-versions/v24.21.0/installation/bin/node\n", stderr: "", terminationStatus: 0, timedOut: false)
+                if isJSONProbe(arguments) {
+                    return ProvisioningProcessResult(succeeded: true, stdout: "{\"version\":\"v24.21.0\",\"execPath\":\"" + root.path + "/node-versions/v24.21.0/installation/bin/node\"}\n", stderr: "", terminationStatus: 0, timedOut: false)
                 }
                 return nil
             },
@@ -309,13 +307,9 @@ struct ProvisioningRuntimePolicyTests {
                         return ProvisioningProcessResult(succeeded: true, stdout: "not-a-version\n", stderr: "", terminationStatus: 0, timedOut: false)
                     }
                 }
-                if arguments.contains("--version") && arguments.contains("node") {
+                if isJSONProbe(arguments) {
                     let version = kind == "unsupported" && root == selected ? "v20.0.0" : "v24.21.0"
-                    return ProvisioningProcessResult(succeeded: true, stdout: version + "\n", stderr: "", terminationStatus: 0, timedOut: false)
-                }
-                if arguments.contains("process.execPath") {
-                    let version = kind == "unsupported" && root == selected ? "v20.0.0" : "v24.21.0"
-                    return ProvisioningProcessResult(succeeded: true, stdout: root.path + "/node-versions/" + version + "/installation/bin/node\n", stderr: "", terminationStatus: 0, timedOut: false)
+                    return ProvisioningProcessResult(succeeded: true, stdout: "{\"version\":\"" + version + "\",\"execPath\":\"" + root.path + "/node-versions/" + version + "/installation/bin/node\"}\n", stderr: "", terminationStatus: 0, timedOut: false)
                 }
                 return nil
             },
@@ -362,11 +356,8 @@ struct ProvisioningRuntimePolicyTests {
                 if arguments == ["default"] {
                     return ProvisioningProcessResult(succeeded: true, stdout: "24.21.0\n", stderr: "", terminationStatus: 0, timedOut: false)
                 }
-                if arguments.contains("--version") && arguments.contains("node") {
-                    return ProvisioningProcessResult(succeeded: true, stdout: "v24.21.0\n", stderr: "", terminationStatus: 0, timedOut: false)
-                }
-                if arguments.contains("process.execPath") {
-                    return ProvisioningProcessResult(succeeded: true, stdout: root.path + "/node-versions/v24.21.0/installation/bin/node\n", stderr: "", terminationStatus: 0, timedOut: false)
+                if isJSONProbe(arguments) {
+                    return ProvisioningProcessResult(succeeded: true, stdout: "{\"version\":\"v24.21.0\",\"execPath\":\"" + root.path + "/node-versions/v24.21.0/installation/bin/node\"}\n", stderr: "", terminationStatus: 0, timedOut: false)
                 }
                 return nil
             },
@@ -443,6 +434,212 @@ struct ProvisioningRuntimePolicyTests {
             chosenFNMDirectoryURL: root
         )
         #expect(!externalContext.isManagedByFNM)
+    }
+
+    @Test("validated managed Node results retain canonical aliases and reject inconsistent probes")
+    func validatedManagedNodeResults() throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("dev-manager-managed-node-\(UUID().uuidString)", isDirectory: true)
+        let expected = root.appendingPathComponent("node-versions/v24.21.0/installation/bin/node")
+        let other = root.appendingPathComponent("node-versions/v22.20.0/installation/bin/node")
+        let alias = root.appendingPathComponent("aliases/default/bin/node")
+        defer { try? fileManager.removeItem(at: root) }
+        try fileManager.createDirectory(at: expected.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: other.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: alias.deletingLastPathComponent(), withIntermediateDirectories: true)
+        #expect(fileManager.createFile(atPath: expected.path, contents: Data()))
+        #expect(fileManager.createFile(atPath: other.path, contents: Data()))
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: expected.path)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: other.path)
+        try fileManager.createSymbolicLink(at: alias, withDestinationURL: expected)
+
+        let valid = ProvisioningManagedNode.validated(
+            reportedVersion: "v24.21.0",
+            actualExecutablePath: alias.path,
+            selector: "24.21.0",
+            expectedExecutableURL: expected,
+            root: root,
+            executableAvailable: { FileManager.default.isExecutableFile(atPath: $0.path) }
+        )
+        #expect(valid.node?.version == "24.21.0")
+        #expect(valid.node?.executableURL == expected.resolvingSymlinksInPath().standardizedFileURL)
+
+        let cases: [(String, String, URL, @Sendable (URL) -> Bool)] = [
+            ("external path", "24.21.0", URL(fileURLWithPath: "/usr/local/bin/node"), { _ in true }),
+            ("missing actual path", "24.21.0", URL(fileURLWithPath: "/tmp/missing-managed-node"), { $0 == expected }),
+            ("different managed version", "24.21.0", other, { _ in true }),
+            ("reported version mismatch", "22.20.0", expected, { _ in true })
+        ]
+        for (_, version, actual, available) in cases {
+            let result = ProvisioningManagedNode.validated(
+                reportedVersion: version,
+                actualExecutablePath: actual.path,
+                selector: "24.21.0",
+                expectedExecutableURL: expected,
+                root: root,
+                executableAvailable: available
+            )
+            #expect(result.node == nil)
+            #expect(result.failure != nil)
+        }
+    }
+
+    @Test("probe results preserve prerelease information instead of making a stable Node")
+    func probeVersionPreservesPrerelease() {
+        #expect(ProvisioningRuntimePolicy.normalizedRuntimeVersion("v24.22.0-rc.1") == "24.22.0-rc.1")
+        #expect(ProvisioningRuntimePolicy.nodeStatus("24.22.0-rc.1") == .prerelease)
+        #expect(!ProvisioningRuntimePolicy.isSupportedNodeVersion("24.22.0-rc.1"))
+    }
+
+    @Test("normalized runtime versions enforce ASCII semantic-version components", arguments: [
+        "0.0.0",
+        "v24.21.0-rc.1+build.01",
+        "24.21.0+001",
+        "24.21.0-alpha-1"
+    ])
+    func strictRuntimeVersionAcceptsValidCases(version: String) {
+        let expected = version.hasPrefix("v") ? String(version.dropFirst()) : version
+        #expect(ProvisioningRuntimePolicy.normalizedRuntimeVersion(version) == expected)
+    }
+
+    @Test("normalized runtime versions reject malformed numeric and Unicode identifiers", arguments: [
+        "",
+        "24.21",
+        "24.21.0.1",
+        "024.21.0",
+        "24.021.0",
+        "24.21.00",
+        "24.21.0-01",
+        "24.21.0-rc..1",
+        "24.21.0-rc_1",
+        "24.21.0-β",
+        "24.21.0+build_1",
+        "24.21.0+"
+    ])
+    func strictRuntimeVersionRejectsInvalidCases(version: String) {
+        #expect(ProvisioningRuntimePolicy.normalizedRuntimeVersion(version) == nil)
+    }
+
+    @Test("raw executable paths reject empty and relative paths before URL construction")
+    func rawExecutablePathValidation() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("dev-manager-relative-node-\(UUID().uuidString)", isDirectory: true)
+        let expected = root.appendingPathComponent("node-versions/v24.21.0/installation/bin/node")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: expected.deletingLastPathComponent(), withIntermediateDirectories: true)
+        #expect(FileManager.default.createFile(atPath: expected.path, contents: Data()))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: expected.path)
+
+        for path in ["", "node-versions/v24.21.0/installation/bin/node"] {
+            let result = ProvisioningManagedNode.validated(
+                reportedVersion: "24.21.0",
+                actualExecutablePath: path,
+                selector: "24.21.0",
+                expectedExecutableURL: expected,
+                root: root,
+                executableAvailable: { FileManager.default.isExecutableFile(atPath: $0.path) }
+            )
+            #expect(result.node == nil)
+            #expect(result.failure?.contains("non-absolute") == true)
+        }
+    }
+
+    @Test("a selected store symlink into another version is rejected before fnm exec")
+    func selectedStoreSymlinkVersionMismatchIsRejectedBeforeExecution() async throws {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("dev-manager-store-link-\(UUID().uuidString)", isDirectory: true)
+        let expected = root.appendingPathComponent("node-versions/v24.21.0/installation/bin/node")
+        let other = root.appendingPathComponent("node-versions/v22.20.0/installation/bin/node")
+        defer { try? fileManager.removeItem(at: root) }
+        try fileManager.createDirectory(at: expected.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: other.deletingLastPathComponent(), withIntermediateDirectories: true)
+        #expect(fileManager.createFile(atPath: other.path, contents: Data()))
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: other.path)
+        try fileManager.createSymbolicLink(at: expected, withDestinationURL: other)
+
+        let direct = ProvisioningManagedNode.validated(
+            reportedVersion: "24.21.0",
+            actualExecutablePath: other.path,
+            selector: "24.21.0",
+            expectedExecutableURL: expected,
+            root: root,
+            executableAvailable: { FileManager.default.isExecutableFile(atPath: $0.path) }
+        )
+        #expect(direct.node == nil)
+        #expect(direct.failure != nil)
+
+        let spy = ProvisioningCommandSpy()
+        let observation = await ProvisioningInspector.inspectFNMRuntime(
+            using: URL(fileURLWithPath: "/tmp/fnm-store-link/fnm"),
+            budget: ProvisioningInspector.RuntimeInspectionBudget(),
+            run: { _, arguments, _, _ in
+                spy.record(arguments)
+                if arguments == ["list"] {
+                    return ProvisioningProcessResult(succeeded: true, stdout: "24.21.0\n", stderr: "", terminationStatus: 0, timedOut: false)
+                }
+                return ProvisioningProcessResult(succeeded: false, stdout: "", stderr: "unexpected exec", terminationStatus: 1, timedOut: false)
+            },
+            filesystemFacts: { _ in
+                ProvisioningFNMRootEvidence(
+                    hasInstalledInventory: true,
+                    inventory: .knownVersions(["24.21.0"]),
+                    defaultAlias: .absent,
+                    rootReadable: true
+                )
+            },
+            executableAvailable: { FileManager.default.isExecutableFile(atPath: $0.path) },
+            rootEnvironment: ["FNM_DIR": root.path],
+            homeDirectory: root.deletingLastPathComponent()
+        )
+        #expect(spy.calls == [["list"]])
+        #expect(observation.nodeContext == nil)
+        #expect(observation.nodeAttention != nil)
+    }
+
+    @Test("one JSON fnm exec serves each candidate and malformed probe results need attention", arguments: [
+        "",
+        "{}",
+        "{\"version\":24,\"execPath\":\"/tmp/node\"}",
+        "not JSON"
+    ])
+    func malformedNodeJSONNeedsAttention(output: String) async {
+        let result = await inspectNodeProbe(
+            processResult: ProvisioningProcessResult(succeeded: true, stdout: output, stderr: "", terminationStatus: 0, timedOut: false)
+        )
+        #expect(result.observation.nodeContext == nil)
+        #expect(result.observation.nodeAttention != nil)
+        #expect(result.calls.filter { $0.first == "exec" }.count == 1)
+        #expect(result.calls.filter { $0.contains("--version") }.isEmpty)
+    }
+
+    @Test("valid JSON probe is one exec and produces a managed context")
+    func validJSONProbeIsSingleExec() async {
+        let root = URL(fileURLWithPath: "/tmp/dev-manager-json-probe")
+        let output = "{\"version\":\"v24.21.0\",\"execPath\":\"\(root.path)/node-versions/v24.21.0/installation/bin/node\"}"
+        let result = await inspectNodeProbe(
+            processResult: ProvisioningProcessResult(succeeded: true, stdout: output, stderr: "", terminationStatus: 0, timedOut: false)
+        )
+        #expect(result.observation.nodeContext?.nodeVersion == "24.21.0")
+        #expect(result.calls.filter { $0.first == "exec" }.count == 1)
+        #expect(result.calls.filter { isJSONProbe($0) } == [[
+            "exec", "--using", "24.21.0", "node", "-p",
+            "JSON.stringify({version: process.version, execPath: process.execPath})"
+        ]])
+    }
+
+    @Test("fnm JSON probe failure and timeout remain attention")
+    func nodeJSONProbeFailureAndTimeoutNeedAttention() async {
+        for processResult in [
+            ProvisioningProcessResult(succeeded: false, stdout: "", stderr: "fnm failed", terminationStatus: 1, timedOut: false),
+            ProvisioningProcessResult(succeeded: false, stdout: "", stderr: "", terminationStatus: -1, timedOut: true)
+        ] {
+            let result = await inspectNodeProbe(processResult: processResult)
+            #expect(result.observation.nodeContext == nil)
+            #expect(result.observation.nodeAttention != nil)
+            #expect(result.calls.filter { $0.first == "exec" }.count == 1)
+        }
     }
 
     @Test("real aliases are managed when they resolve inside the fnm store")
@@ -783,6 +980,36 @@ struct ProvisioningRuntimePolicyTests {
         #expect(candidates.count <= ProvisioningRuntimePolicy.maximumFNMRuntimeCandidates)
     }
 
+    private func inspectNodeProbe(processResult: ProvisioningProcessResult) async -> (observation: ProvisioningInspector.RuntimeObservation, calls: [[String]]) {
+        let root = URL(fileURLWithPath: "/tmp/dev-manager-json-probe")
+        let spy = ProvisioningCommandSpy()
+        let observation = await ProvisioningInspector.inspectFNMRuntime(
+            using: URL(fileURLWithPath: "/tmp/fnm-json-probe/fnm"),
+            budget: ProvisioningInspector.RuntimeInspectionBudget(),
+            run: { _, arguments, _, _ in
+                spy.record(arguments)
+                if arguments == ["list"] {
+                    return ProvisioningProcessResult(succeeded: true, stdout: "24.21.0\n", stderr: "", terminationStatus: 0, timedOut: false)
+                }
+                return processResult
+            },
+            filesystemFacts: { _ in
+                ProvisioningFNMRootEvidence(
+                    hasInstalledInventory: true,
+                    inventory: .knownVersions(["24.21.0"]),
+                    defaultAlias: .absent,
+                    rootReadable: true
+                )
+            },
+            executableAvailable: { url in
+                url.path.contains("/node-versions/") && url.path.hasSuffix("/installation/bin/node")
+            },
+            rootEnvironment: ["FNM_DIR": root.path],
+            homeDirectory: URL(fileURLWithPath: "/tmp/dev-manager-json-home", isDirectory: true)
+        )
+        return (observation, spy.calls)
+    }
+
     private enum TranscriptStage: Sendable {
         case emptyStore
         case emptyStoreChangedError
@@ -847,13 +1074,10 @@ struct ProvisioningRuntimePolicyTests {
                         }
                         return ProvisioningProcessResult(succeeded: true, stdout: selected, stderr: "", terminationStatus: 0, timedOut: false)
                     }
-                    if arguments.contains("--version") && arguments.contains("node") {
-                        let version = stage == .unsupportedConfiguredDefault ? "v20.0.0\n" : "v24.21.0\n"
-                        return ProvisioningProcessResult(succeeded: true, stdout: version, stderr: "", terminationStatus: 0, timedOut: false)
-                    }
-                    if arguments.contains("process.execPath") {
+                    if isJSONProbe(arguments) {
+                        let version = stage == .unsupportedConfiguredDefault ? "v20.0.0" : "v24.21.0"
                         let path = stage == .unsupportedConfiguredDefault ? unsupportedNodePath : nodePath
-                        return ProvisioningProcessResult(succeeded: true, stdout: path + "\n", stderr: "", terminationStatus: 0, timedOut: false)
+                        return ProvisioningProcessResult(succeeded: true, stdout: "{\"version\":\"" + version + "\",\"execPath\":\"" + path + "\"}\n", stderr: "", terminationStatus: 0, timedOut: false)
                     }
                     if arguments == ["--version"] {
                         return ProvisioningProcessResult(succeeded: true, stdout: "12.6.0\n", stderr: "", terminationStatus: 0, timedOut: false)

@@ -490,10 +490,6 @@ nonisolated enum ProvisioningInspector {
                 if let failure = nodeProbe.failure { firstAttention = firstAttention ?? failure }
                 continue
             }
-            guard ProvisioningRuntimePolicy.isManagedNodeExecutable(node.executableURL, within: probe.root) else {
-                firstAttention = firstAttention ?? "fnm's configured default resolved to a Node outside its managed node-versions store."
-                continue
-            }
             let context = ProvisioningRuntimeContext(
                 nodeVersion: node.version,
                 nodeExecutableURL: node.executableURL,
@@ -600,10 +596,6 @@ nonisolated enum ProvisioningInspector {
                     hadUnusableSupportedNode = true
                     continue
                 }
-                guard ProvisioningRuntimePolicy.isManagedNodeExecutable(node.executableURL, within: probe.root) else {
-                    firstAttention = firstAttention ?? "fnm inventory entry \(selector) resolved to a Node outside its managed node-versions store."
-                    continue
-                }
                 let context = ProvisioningRuntimeContext(
                     nodeVersion: node.version,
                     nodeExecutableURL: node.executableURL,
@@ -686,9 +678,9 @@ nonisolated enum ProvisioningInspector {
         )
     }
 
-    private nonisolated struct FNMNodeProbe {
+    private nonisolated struct FNMNodeProbePayload: Decodable {
         let version: String
-        let executableURL: URL
+        let execPath: String
     }
 
     private nonisolated static func probeFNMNode(
@@ -699,34 +691,48 @@ nonisolated enum ProvisioningInspector {
         budget: RuntimeInspectionBudget,
         run: @Sendable (URL, [String], [String: String], TimeInterval) async -> ProvisioningProcessResult?,
         executableAvailable: @Sendable (URL) -> Bool
-    ) async -> (probe: FNMNodeProbe?, failure: String?, budgetExhausted: Bool) {
-        guard let normalizedSelector = ProvisioningRuntimePolicy.normalizedVersion(selector) else {
-            return (nil, "fnm candidate \(selector) is not a concrete semantic version.", false)
-        }
-        let expectedNode = root.appendingPathComponent("node-versions/v\(normalizedSelector)/installation/bin/node")
+    ) async -> (probe: ProvisioningManagedNode?, failure: String?, budgetExhausted: Bool) {
         // Validate the concrete store path before any fnm exec. This prevents
         // fnm from falling through to an ambient standalone Node.
-        guard ProvisioningRuntimePolicy.isManagedNodeExecutable(expectedNode, within: root),
-              executableAvailable(expectedNode) else {
-            return (nil, "fnm candidate \(normalizedSelector) has no executable in its managed node-versions store.", false)
+        let expected = ProvisioningRuntimePolicy.expectedManagedNodeExecutable(
+            for: selector,
+            within: root,
+            executableAvailable: executableAvailable
+        )
+        guard let expectedNode = expected.url else {
+            return (nil, expected.failure, false)
         }
-        guard let versionResult = await run(fnmURL, ["exec", "--using", selector, "node", "--version"], environment, budget.remainingTimeout ?? 0) else {
-            return (nil, "fnm could not probe existing Node \(selector): the version check timed out.", true)
+        guard let timeout = budget.remainingTimeout else {
+            return (nil, "fnm could not probe existing Node \(selector): the runtime inspection budget was exhausted.", true)
         }
-        guard versionResult.succeeded,
-              let reported = versionResult.stdout.firstNonEmptyLine,
-              ProvisioningRuntimePolicy.normalizedVersion(reported) != nil else {
-            return (nil, "fnm could not probe existing Node \(selector): \(versionResult.failureDescription(for: "fnm exec --using \(selector) node --version", timeout: ProvisioningConfiguration.commandTimeout))", versionResult.timedOut)
+        let arguments = [
+            "exec", "--using", selector, "node", "-p",
+            "JSON.stringify({version: process.version, execPath: process.execPath})"
+        ]
+        guard let result = await run(fnmURL, arguments, environment, timeout) else {
+            return (nil, "fnm could not probe existing Node \(selector): the JSON probe timed out.", true)
         }
-        guard let pathResult = await run(fnmURL, ["exec", "--using", selector, "node", "-p", "process.execPath"], environment, budget.remainingTimeout ?? 0) else {
-            return (nil, "fnm could not resolve existing Node \(selector)'s executable path: the path check timed out.", true)
+        guard result.succeeded else {
+            return (nil, "fnm could not probe existing Node \(selector): \(result.failureDescription(for: "fnm exec --using \(selector) node -p JSON.stringify(...)", timeout: ProvisioningConfiguration.commandTimeout))", result.timedOut)
         }
-        guard pathResult.succeeded,
-              let path = pathResult.stdout.firstNonEmptyLine,
-              path.hasPrefix("/") else {
-            return (nil, "fnm could not resolve existing Node \(selector)'s executable path: \(pathResult.failureDescription(for: "fnm exec --using \(selector) node -p process.execPath", timeout: ProvisioningConfiguration.commandTimeout))", pathResult.timedOut)
+        let payload: FNMNodeProbePayload
+        do {
+            payload = try JSONDecoder().decode(FNMNodeProbePayload.self, from: Data(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).utf8))
+        } catch {
+            return (nil, "fnm could not probe existing Node \(selector): the Node JSON probe was malformed or had the wrong shape.", result.timedOut)
         }
-        return (FNMNodeProbe(version: runtimeVersion(reported), executableURL: URL(fileURLWithPath: path)), nil, false)
+        let validated = ProvisioningManagedNode.validated(
+            reportedVersion: payload.version,
+            actualExecutablePath: payload.execPath,
+            selector: selector,
+            expectedExecutableURL: expectedNode,
+            root: root,
+            executableAvailable: executableAvailable
+        )
+        guard let node = validated.node else {
+            return (nil, "fnm could not probe existing Node \(selector): \(validated.failure ?? "the managed Node result was invalid").", result.timedOut)
+        }
+        return (node, nil, false)
     }
 
     private nonisolated static func versionSelector(from output: String) -> String? {
@@ -875,11 +881,6 @@ nonisolated enum ProvisioningInspector {
 
     private nonisolated static func normalized(_ value: String) -> String {
         ProvisioningRuntimePolicy.normalizedVersion(value) ?? reportedVersion(value)
-    }
-
-    private nonisolated static func runtimeVersion(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.hasPrefix("v") ? String(trimmed.dropFirst()) : trimmed
     }
 
     private nonisolated static func reportedVersion(_ value: String) -> String {
