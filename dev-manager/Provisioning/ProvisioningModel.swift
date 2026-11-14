@@ -417,13 +417,9 @@ final class ProvisioningModel: ObservableObject {
         }
         showProgress("Inspecting installed tools…")
 
-        let inspection = await withTaskCancellationHandler {
-            await dependencies.inspect()
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                self?.finishInspection(operationID)
-            }
-        }
+        // Cancellation does not release ownership: the inspector is not
+        // cancellation-aware and must drain before another inspection starts.
+        let inspection = await dependencies.inspect()
         guard !Task.isCancelled, ownsInspection(operationID, target: nil) else { return }
 
         // Apply checks and their concrete context together so a failed refresh
@@ -452,13 +448,9 @@ final class ProvisioningModel: ObservableObject {
         defer { finishInspection(operationID) }
         showProgress("Checking \(id.title)…")
 
-        let inspection = await withTaskCancellationHandler {
-            await dependencies.inspectTarget(id)
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                self?.finishInspection(operationID)
-            }
-        }
+        // Cancellation does not release ownership: the inspector is not
+        // cancellation-aware and must drain before another inspection starts.
+        let inspection = await dependencies.inspectTarget(id)
         guard !Task.isCancelled, ownsInspection(operationID, target: id) else { return }
         apply(inspection, for: id)
         if id == .developerTools { commandLineToolsRequestNeedsCheck = false }
@@ -820,13 +812,9 @@ final class ProvisioningModel: ObservableObject {
             operationState = .tool(token: operationID, target: id, phase: .reinspecting(inspectionToken))
         }
         showProgress("Checking \(id.title)…")
-        let inspection = await withTaskCancellationHandler {
-            await dependencies.inspectTarget(id)
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                self?.finishToolOperation(id, operationID: operationID)
-            }
-        }
+        // Keep the parent tool operation while this non-cancellation-aware
+        // inspection drains; the owning tool orchestration performs cleanup.
+        let inspection = await dependencies.inspectTarget(id)
         guard !Task.isCancelled, ownsToolInspection(id, operationID: operationID, inspectionToken: inspectionToken) else { return false }
         apply(inspection, for: id)
         operationState = .tool(token: operationID, target: id, phase: .installing)

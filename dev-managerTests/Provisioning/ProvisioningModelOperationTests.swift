@@ -93,73 +93,99 @@ struct ProvisioningModelOperationTests {
         #expect(model.installationLogURL == recorder.url)
     }
 
-    @Test("cancelled full inspection can be replaced without stale publication")
-    func cancelledFullInspectionCanBeReplaced() async {
-        let staleGate = AsyncGate<ProvisioningInspection>()
-        let currentGate = AsyncGate<ProvisioningInspection>()
+    @Test("cancelled full inspection retains ownership until drain")
+    func cancelledFullInspectionRetainsOwnershipUntilDrain() async {
+        let inspectionProbe = InspectionProbe<ProvisioningInspection>()
+        await inspectionProbe.resolve(inspection(fnmState: .missing("initial fnm missing")))
+        let targetProbe = InspectionProbe<ProvisioningTargetedInspection>()
         let calls = CallCounter()
+        let installCalls = CallCounter()
         let dependencies = ProvisioningModelDependencies(
             inspect: {
                 switch await calls.next() {
-                case 0: return await staleGate.wait()
-                default: return await currentGate.wait()
+                case 0: return await inspectionProbe.wait()
+                default: return await inspectionProbe.wait()
                 }
+            },
+            inspectTarget: { _ in await targetProbe.wait() },
+            installFNM: {
+                _ = await installCalls.next()
+                return successfulProcess()
             }
         )
         let model = ProvisioningModel(dependencies: dependencies)
+        await model.checkAgain()
+        let checksBeforeCancellation = model.checks
+        let contextBeforeCancellation = model.runtimeContext
+        let failureLogBeforeCancellation = model.installationFailureLogURL
 
-        let staleTask = Task { await model.checkAgain() }
-        await Task.yield()
-        staleTask.cancel()
-        await yieldUntilIdle(model)
+        let cancelled = Task { await model.checkAgain() }
+        await inspectionProbe.waitUntilStarted(2)
+        let ownership = model.operationState
+        cancelled.cancel()
+        #expect(model.operationState == ownership)
+        #expect(model.isBusy)
+
+        // The old probe owns the model: neither a new check nor an eligible
+        // install may reach its dependency while that probe is suspended.
+        await model.checkAgain()
+        await model.installRuntimeTool(.fnm)
+        #expect(await inspectionProbe.calls == 2)
+        #expect(await targetProbe.calls == 0)
+        #expect(await installCalls.value == 0)
+
+        await inspectionProbe.resolve(inspection(fnmState: .ready("stale returned fnm")))
+        await cancelled.value
         #expect(model.operationState == nil)
-
-        let currentTask = Task { await model.checkAgain() }
-        await Task.yield()
-        await staleGate.resolve(inspection(developerToolsState: .ready("stale developer tools")))
-        await staleTask.value
-        #expect(model.checks.allSatisfy { $0.state == .checking })
-        #expect(model.runtimeContext == nil)
+        #expect(model.checks == checksBeforeCancellation)
+        #expect(model.runtimeContext == contextBeforeCancellation)
         #expect(model.messagePresentation == .progress("Inspecting installed tools…"))
+        #expect(model.installationFailureLogURL == failureLogBeforeCancellation)
 
-        await currentGate.resolve(inspection())
-        await currentTask.value
-        #expect(model.checks.first(where: { $0.id == .developerTools })?.state == .ready("developer tools"))
+        let current = Task { await model.checkAgain() }
+        await inspectionProbe.waitUntilStarted(3)
+        await inspectionProbe.resolve(inspection(fnmState: .ready("current fnm")))
+        await current.value
+        #expect(model.checks.first(where: { $0.id == .fnm })?.state == .ready("current fnm"))
     }
 
-    @Test("cancelled targeted inspection cannot publish over a newer full inspection")
-    func cancelledTargetedInspectionIsStale() async {
-        let staleGate = AsyncGate<ProvisioningTargetedInspection>()
-        let currentGate = AsyncGate<ProvisioningInspection>()
-        let fullCalls = CallCounter()
+    @Test("cancelled targeted inspection retains ownership until drain")
+    func cancelledTargetedInspectionRetainsOwnershipUntilDrain() async {
+        let fullProbe = InspectionProbe<ProvisioningInspection>()
+        await fullProbe.resolve(inspection(fnmState: .missing("fnm missing")))
+        let targetProbe = InspectionProbe<ProvisioningTargetedInspection>()
+        let target = ProvisioningCheck.ID.fnm
         let dependencies = ProvisioningModelDependencies(
-            inspect: {
-                switch await fullCalls.next() {
-                case 0: return inspection()
-                default: return await currentGate.wait()
-                }
-            },
-            inspectTarget: { _ in await staleGate.wait() }
+            inspect: { await fullProbe.wait() },
+            inspectTarget: { _ in await targetProbe.wait() }
         )
         let model = ProvisioningModel(dependencies: dependencies)
         await model.checkAgain()
+        let checksBeforeCancellation = model.checks
 
-        let staleTask = Task { await model.checkTool(.fnm) }
-        await Task.yield()
-        staleTask.cancel()
-        await yieldUntilIdle(model)
+        let cancelled = Task { await model.checkTool(target) }
+        await targetProbe.waitUntilStarted()
+        let ownership = model.operationState
+        cancelled.cancel()
+        #expect(model.operationState == ownership)
+        #expect(model.isBusy)
+
+        await model.checkAgain()
+        await model.checkTool(target)
+        await model.installRuntimeTool(target)
+        #expect(await targetProbe.calls == 1)
+
+        await targetProbe.resolve(targetedInspection(target, fnmState: .ready("stale returned fnm"), fnmURL: URL(fileURLWithPath: "/tmp/stale-fnm")))
+        await cancelled.value
         #expect(model.operationState == nil)
+        #expect(model.checks == checksBeforeCancellation)
+        #expect(model.messagePresentation == .progress("Checking Fast Node Manager (fnm)…"))
 
-        let currentTask = Task { await model.checkAgain() }
-        await Task.yield()
-        await staleGate.resolve(targetedInspection(.fnm, fnmState: .ready("stale fnm"), fnmURL: URL(fileURLWithPath: "/tmp/stale-fnm")))
-        await staleTask.value
-        #expect(model.checks.first(where: { $0.id == .fnm })?.state == .ready("fnm"))
-        #expect(model.runtimeContext == nil)
-        #expect(model.messagePresentation == .progress("Inspecting installed tools…"))
-
-        await currentGate.resolve(inspection())
-        await currentTask.value
+        let current = Task { await model.checkTool(target) }
+        await targetProbe.waitUntilStarted(2)
+        await targetProbe.resolve(targetedInspection(target, fnmState: .ready("current fnm"), fnmURL: URL(fileURLWithPath: "/tmp/current-fnm")))
+        await current.value
+        #expect(model.checks.first(where: { $0.id == target })?.state == .ready("current fnm"))
     }
 
     @Test("cancelled installation keeps ownership until the installer returns")
@@ -266,24 +292,80 @@ struct ProvisioningModelOperationTests {
         await newerInspection.value
     }
 
-    @Test("cancelled inspection completion cannot publish over a newer inspection")
-    func cancelledInspectionIsStale() async {
-        let gate = AsyncGate<ProvisioningInspection>()
-        let model = ProvisioningModel(dependencies: ProvisioningModelDependencies(inspect: { await gate.wait() }))
-        let cancelled = Task { await model.checkAgain() }
-        await Task.yield()
+    @Test("cancelled preflight retains parent tool ownership and never installs")
+    func cancelledPreflightRetainsParentOwnership() async {
+        let fullProbe = InspectionProbe<ProvisioningInspection>()
+        await fullProbe.resolve(inspection(fnmState: .missing("fnm missing"), nodeState: .missing("Node missing"), pnpmState: .unverified("Node required")))
+        let preflightProbe = InspectionProbe<ProvisioningTargetedInspection>()
+        let installCalls = CallCounter()
+        let dependencies = ProvisioningModelDependencies(
+            inspect: { await fullProbe.wait() },
+            inspectTarget: { _ in await preflightProbe.wait() },
+            installFNM: {
+                _ = await installCalls.next()
+                return successfulProcess()
+            }
+        )
+        let model = ProvisioningModel(dependencies: dependencies)
+        await model.checkAgain()
+
+        let cancelled = Task { await model.installRuntimeTool(.fnm) }
+        await preflightProbe.waitUntilStarted()
+        let ownership = model.operationState
         cancelled.cancel()
-        await gate.resolve(inspection(developerToolsState: .missing("stale")))
+        #expect(model.operationState == ownership)
+        #expect(model.isBusy)
+        await model.installRuntimeTool(.fnm)
+        #expect(await installCalls.value == 0)
+
+        await preflightProbe.resolve(targetedInspection(.fnm, fnmState: .missing("stale preflight")))
         await cancelled.value
         #expect(model.operationState == nil)
-        #expect(model.checks.allSatisfy { $0.state == .checking })
+        #expect(await installCalls.value == 0)
+    }
 
-        let current = Task { await model.checkAgain() }
-        await Task.yield()
-        await gate.resolve(inspection())
+    @Test("cancelled postflight retains parent ownership and suppresses returned inspection")
+    func cancelledPostflightRetainsParentOwnership() async {
+        let fullProbe = InspectionProbe<ProvisioningInspection>()
+        await fullProbe.resolve(inspection(fnmState: .missing("fnm missing"), nodeState: .missing("Node missing"), pnpmState: .unverified("Node required")))
+        let targetProbe = InspectionProbe<ProvisioningTargetedInspection>()
+        let installStarted = AsyncSignal()
+        let recorder = InstallationRecorderBox()
+        let dependencies = ProvisioningModelDependencies(
+            inspect: { await fullProbe.wait() },
+            inspectTarget: { _ in await targetProbe.wait() },
+            installFNM: {
+                await installStarted.signal()
+                return successfulProcess()
+            },
+            recordInstallation: recorder.record
+        )
+        let model = ProvisioningModel(dependencies: dependencies)
+        await model.checkAgain()
+        let installTask = Task { await model.installRuntimeTool(.fnm) }
+        await targetProbe.waitUntilStarted()
+        await targetProbe.resolve(targetedInspection(.fnm, fnmState: .missing("preflight missing")))
+        await installStarted.wait()
+        await targetProbe.waitUntilStarted(2)
+        let checksBeforeCancellation = model.checks
+        let ownership = model.operationState
+        installTask.cancel()
+        #expect(model.operationState == ownership)
+        #expect(model.isBusy)
+
+        await targetProbe.resolve(targetedInspection(.fnm, fnmState: .ready("stale postflight"), fnmURL: URL(fileURLWithPath: "/tmp/stale-postflight")))
+        await installTask.value
+        #expect(model.operationState == nil)
+        #expect(model.checks == checksBeforeCancellation)
+        #expect(model.checks.first(where: { $0.id == .fnm })?.state == .missing("preflight missing"))
+        #expect(model.runtimeContext == nil)
+        #expect(await recorder.value == 1)
+
+        let current = Task { await model.checkTool(.fnm) }
+        await targetProbe.waitUntilStarted(3)
+        await targetProbe.resolve(targetedInspection(.fnm, fnmState: .ready("current fnm"), fnmURL: URL(fileURLWithPath: "/tmp/current-fnm")))
         await current.value
-        #expect(model.hasCompletedCheck)
-        #expect(model.checks.first(where: { $0.id == .developerTools })?.state == .ready("developer tools"))
+        #expect(model.checks.first(where: { $0.id == .fnm })?.state == .ready("current fnm"))
     }
 
     @Test("failed runtime installation always returns to idle")
@@ -395,6 +477,43 @@ private actor AsyncGate<Value: Sendable> {
         if !pending.isEmpty { return pending.removeFirst() }
         return await withCheckedContinuation { continuation in
             continuations.append(continuation)
+        }
+    }
+
+    func resolve(_ value: Value) {
+        if !continuations.isEmpty {
+            continuations.removeFirst().resume(returning: value)
+        } else {
+            pending.append(value)
+        }
+    }
+}
+
+/// A deterministic, cancellation-agnostic dependency probe. It signals entry
+/// before suspending, so tests never use a yield as a proxy for operation state.
+private actor InspectionProbe<Value: Sendable> {
+    private var continuations: [CheckedContinuation<Value, Never>] = []
+    private var pending: [Value] = []
+    private var startedCount = 0
+    private var startWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    var calls: Int { startedCount }
+
+    func wait() async -> Value {
+        startedCount += 1
+        let ready = startWaiters.filter { $0.0 <= startedCount }
+        startWaiters.removeAll { $0.0 <= startedCount }
+        ready.forEach { $0.1.resume() }
+        if !pending.isEmpty { return pending.removeFirst() }
+        return await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func waitUntilStarted(_ expected: Int = 1) async {
+        guard startedCount < expected else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append((expected, continuation))
         }
     }
 
