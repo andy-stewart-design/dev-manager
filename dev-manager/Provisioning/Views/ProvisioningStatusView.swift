@@ -292,8 +292,8 @@ struct ProvisioningStatusView: View {
     private func version(for id: ProvisioningCheck.ID, state: ProvisioningCheck.State) -> String? {
         guard state.isReady else { return nil }
         switch id {
-        case .node: return model.runtimeContext?.nodeVersion
-        case .pnpm: return model.runtimeContext?.pnpmVersion
+        case .node: return model.runtimeContext?.node.version
+        case .pnpm: return model.runtimeContext?.pnpm?.version
         default: return nil
         }
     }

@@ -25,17 +25,17 @@ nonisolated enum ProvisioningRuntimeInstaller {
 
     nonisolated static func installPnpm(using context: ProvisioningRuntimeContext) async -> ProvisioningProcessResult {
         let version = ProvisioningRuntimePolicy.recommendedPnpmVersion
-        guard context.isManagedByFNM,
-              let fnmURL = context.fnmExecutableURL,
-              let selector = context.fnmSelector else {
+        guard context.isManagedByFNM else {
             return ProvisioningProcessResult(
                 succeeded: false,
                 stdout: "",
-                stderr: "The selected runtime context does not contain a usable managed fnm executable and selector.",
+                stderr: "The selected runtime context does not contain a usable managed Node.",
                 terminationStatus: -1,
                 timedOut: false
             )
         }
+        let fnmURL = context.fnmExecutableURL
+        let selector = context.fnmSelector
         let environment = ProvisioningFNMContext.environment(
             basedOn: ProvisioningConfiguration.runtimeInstallEnvironment,
             root: context.chosenFNMDirectoryURL

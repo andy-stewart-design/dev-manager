@@ -195,7 +195,7 @@ struct ProvisioningRuntimePolicyTests {
             rootEnvironment: environment,
             homeDirectory: home
         )
-        #expect(observation.chosenFNMDirectoryURL == selected)
+        #expect(chosenRoot(observation) == selected)
         #expect(spy.calls.isEmpty)
         #expect(spy.roots.isEmpty)
     }
@@ -231,11 +231,11 @@ struct ProvisioningRuntimePolicyTests {
             rootEnvironment: [:],
             homeDirectory: home
         )
-        #expect(observation.chosenFNMDirectoryURL == selected)
-        #expect(observation.nodeContext?.nodeVersion == "24.21.0")
+        #expect(chosenRoot(observation) == selected)
+        #expect(selectedContext(observation)?.node.version == "24.21.0")
         #expect(!spy.calls.isEmpty)
         #expect(Set(spy.roots) == Set([selected.path]))
-        #expect(observation.nodeAttention?.contains("could not be read") == true)
+        #expect(nodeAttention(observation)?.contains("could not be read") == true)
         #expect(!spy.roots.contains(alternate.path))
     }
 
@@ -270,9 +270,9 @@ struct ProvisioningRuntimePolicyTests {
             rootEnvironment: [:],
             homeDirectory: home
         )
-        #expect(observation.chosenFNMDirectoryURL == legacy)
-        #expect(observation.nodeContext?.nodeVersion == "24.21.0")
-        #expect(observation.nodeContext?.nodeExecutableURL.path == legacy.path + "/node-versions/v24.21.0/installation/bin/node")
+        #expect(chosenRoot(observation) == legacy)
+        #expect(selectedContext(observation)?.node.version == "24.21.0")
+        #expect(selectedContext(observation)?.node.executableURL.path == legacy.path + "/node-versions/v24.21.0/installation/bin/node")
         #expect(!spy.calls.isEmpty)
         #expect(Set(spy.roots) == Set([legacy.path]))
     }
@@ -328,15 +328,15 @@ struct ProvisioningRuntimePolicyTests {
             rootEnvironment: [:],
             homeDirectory: home
         )
-        #expect(observation.chosenFNMDirectoryURL == selected)
+        #expect(chosenRoot(observation) == selected)
         #expect(!spy.calls.isEmpty)
         #expect(Set(spy.roots) == Set([selected.path]))
         if kind == "unsupported" {
-            #expect(observation.nodeContext?.nodeVersion == "20.0.0")
-            #expect(observation.nodeAttention?.contains("outside supported stable majors") == true)
+            #expect(selectedContext(observation)?.node.version == "20.0.0")
+            #expect(nodeAttention(observation)?.contains("outside supported stable majors") == true)
         } else {
-            #expect(observation.nodeContext == nil)
-            #expect(observation.nodeAttention != nil)
+            #expect(selectedContext(observation) == nil)
+            #expect(nodeAttention(observation) != nil)
         }
         #expect(!spy.roots.contains(alternate.path))
     }
@@ -372,27 +372,84 @@ struct ProvisioningRuntimePolicyTests {
             rootEnvironment: [:],
             homeDirectory: home
         )
-        #expect(observation.chosenFNMDirectoryURL == selected)
+        #expect(chosenRoot(observation) == selected)
         #expect(spy.calls == [["default"]])
         #expect(Set(spy.roots) == Set([selected.path]))
-        #expect(observation.nodeContext == nil)
-        #expect(observation.nodeAttention?.contains("no executable") == true)
+        #expect(selectedContext(observation) == nil)
+        #expect(nodeAttention(observation)?.contains("no executable") == true)
+    }
+
+    @Test("runtime outcome mapping preserves node missing and attention roots")
+    func runtimeOutcomeMappingPreservesNodeStates() {
+        let root = URL(fileURLWithPath: "/tmp/fnm-outcomes", isDirectory: true)
+        let missing = ProvisioningInspector.runtimeChecks(for: .missing(root: root, reason: "no managed Node"))
+        #expect(missing.chosenFNMDirectoryURL == root)
+        if case .missing = missing.node.state {} else { #expect(Bool(false)) }
+        if case .unverified = missing.pnpm.state {} else { #expect(Bool(false)) }
+
+        let attention = ProvisioningInspector.runtimeChecks(for: .attention(root: root, reason: "Node probe failed"))
+        #expect(attention.chosenFNMDirectoryURL == root)
+        if case .attention = attention.node.state {} else { #expect(Bool(false)) }
+        if case .unverified = attention.pnpm.state {} else { #expect(Bool(false)) }
+    }
+
+    @Test("selected runtime maps every explicit pnpm outcome")
+    func selectedRuntimeMapsPnpmOutcomes() throws {
+        let validNode = try makeValidatedNode()
+        defer { try? FileManager.default.removeItem(at: validNode.root) }
+        let node = validNode.node
+        let fnm = URL(fileURLWithPath: "/opt/homebrew/bin/fnm")
+        let root = validNode.root
+        let pnpmURL = URL(fileURLWithPath: "/opt/homebrew/bin/pnpm")
+        let outcomes: [ProvisioningInspector.PnpmOutcome] = [
+            .missing,
+            .unusable(executableURL: pnpmURL, reason: "exit 1"),
+            .unsupported(ProvisioningPnpmTool(version: "9.0.0", executableURL: pnpmURL)),
+            .ready(ProvisioningPnpmTool(version: "12.6.0", executableURL: pnpmURL)),
+            .budgetExhausted("Runtime inspection budget exhausted.")
+        ]
+        for outcome in outcomes {
+            let checks = ProvisioningInspector.runtimeChecks(for: .selected(.init(node: node, fnmExecutableURL: fnm, fnmSelector: "24.21.0", root: root, pnpm: outcome)))
+            switch outcome {
+            case .missing:
+                if case .missing = checks.pnpm.state {} else { #expect(Bool(false)) }
+            case .ready:
+                if case .ready = checks.pnpm.state {} else { #expect(Bool(false)) }
+            case .unusable, .unsupported, .budgetExhausted:
+                if case .attention = checks.pnpm.state {} else { #expect(Bool(false)) }
+            }
+        }
+
+        let unsupportedFixture = try makeValidatedNode(version: "20.0.0")
+        defer { try? FileManager.default.removeItem(at: unsupportedFixture.root) }
+        let unsupportedNode = ProvisioningInspector.runtimeChecks(for: .selected(.init(
+            node: unsupportedFixture.node,
+            fnmExecutableURL: fnm,
+            fnmSelector: "20.0.0",
+            root: unsupportedFixture.root,
+            pnpm: .ready(ProvisioningPnpmTool(version: "12.6.0", executableURL: pnpmURL)),
+            attention: "configured default is unsupported"
+        )))
+        if case .attention = unsupportedNode.node.state {} else { #expect(Bool(false)) }
+        if case .ready = unsupportedNode.pnpm.state {} else { #expect(Bool(false)) }
+        #expect(unsupportedNode.context?.pnpm == nil)
+        #expect(unsupportedNode.context?.hasUsablePnpm == false)
     }
 
     @Test("a managed fnm Node remains selected when pnpm is missing")
-    func managedNodeRemainsSelectedWhenPnpmIsMissing() {
+    func managedNodeRemainsSelectedWhenPnpmIsMissing() throws {
+        let fixture = try makeValidatedNode()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let context = ProvisioningRuntimeContext(
-            nodeVersion: "24.21.0",
-            nodeExecutableURL: URL(fileURLWithPath: "/Users/test/.local/share/fnm/node-versions/v24.21.0/installation/bin/node"),
-            pnpmVersion: nil,
-            pnpmExecutableURL: nil,
+            node: fixture.node,
+            pnpm: nil,
             fnmExecutableURL: URL(fileURLWithPath: "/opt/homebrew/bin/fnm"),
             fnmSelector: "24.21.0",
-            chosenFNMDirectoryURL: URL(fileURLWithPath: "/Users/test/.local/share/fnm", isDirectory: true)
+            chosenFNMDirectoryURL: fixture.root
         )
         #expect(context.isManagedByFNM)
         #expect(!context.hasUsablePnpm)
-        #expect(context.chosenFNMDirectoryURL.path == "/Users/test/.local/share/fnm")
+        #expect(context.chosenFNMDirectoryURL == fixture.root)
     }
 
     @Test("fnm absence leaves external Node unprobed and setup-neutral")
@@ -424,16 +481,17 @@ struct ProvisioningRuntimePolicyTests {
             URL(fileURLWithPath: "/tmp/fnm-root-evil/node-versions/v24.21.0/installation/bin/node"), within: root))
         #expect(!ProvisioningRuntimePolicy.isManagedNodeExecutable(
             URL(fileURLWithPath: "/usr/local/bin/node"), within: root))
-        let externalContext = ProvisioningRuntimeContext(
-            nodeVersion: "24.21.0",
-            nodeExecutableURL: URL(fileURLWithPath: "/usr/local/bin/node"),
-            pnpmVersion: nil,
-            pnpmExecutableURL: nil,
-            fnmExecutableURL: URL(fileURLWithPath: "/opt/homebrew/bin/fnm"),
-            fnmSelector: "24.21.0",
-            chosenFNMDirectoryURL: root
+        let expected = root.appendingPathComponent("node-versions/v24.21.0/installation/bin/node")
+        let external = ProvisioningManagedNode.validated(
+            reportedVersion: "24.21.0",
+            actualExecutablePath: "/usr/local/bin/node",
+            selector: "24.21.0",
+            expectedExecutableURL: expected,
+            root: root,
+            executableAvailable: { _ in true }
         )
-        #expect(!externalContext.isManagedByFNM)
+        #expect(external.node == nil)
+        #expect(external.failure != nil)
     }
 
     @Test("validated managed Node results retain canonical aliases and reject inconsistent probes")
@@ -594,8 +652,8 @@ struct ProvisioningRuntimePolicyTests {
             homeDirectory: root.deletingLastPathComponent()
         )
         #expect(spy.calls == [["list"]])
-        #expect(observation.nodeContext == nil)
-        #expect(observation.nodeAttention != nil)
+        #expect(selectedContext(observation) == nil)
+        #expect(nodeAttention(observation) != nil)
     }
 
     @Test("one JSON fnm exec serves each candidate and malformed probe results need attention", arguments: [
@@ -608,8 +666,8 @@ struct ProvisioningRuntimePolicyTests {
         let result = await inspectNodeProbe(
             processResult: ProvisioningProcessResult(succeeded: true, stdout: output, stderr: "", terminationStatus: 0, timedOut: false)
         )
-        #expect(result.observation.nodeContext == nil)
-        #expect(result.observation.nodeAttention != nil)
+        #expect(selectedContext(result.observation) == nil)
+        #expect(nodeAttention(result.observation) != nil)
         #expect(result.calls.filter { $0.first == "exec" }.count == 1)
         #expect(result.calls.filter { $0.contains("--version") }.isEmpty)
     }
@@ -621,7 +679,7 @@ struct ProvisioningRuntimePolicyTests {
         let result = await inspectNodeProbe(
             processResult: ProvisioningProcessResult(succeeded: true, stdout: output, stderr: "", terminationStatus: 0, timedOut: false)
         )
-        #expect(result.observation.nodeContext?.nodeVersion == "24.21.0")
+        #expect(selectedContext(result.observation)?.node.version == "24.21.0")
         #expect(result.calls.filter { $0.first == "exec" }.count == 1)
         #expect(result.calls.filter { isJSONProbe($0) } == [[
             "exec", "--using", "24.21.0", "node", "-p",
@@ -636,8 +694,8 @@ struct ProvisioningRuntimePolicyTests {
             ProvisioningProcessResult(succeeded: false, stdout: "", stderr: "", terminationStatus: -1, timedOut: true)
         ] {
             let result = await inspectNodeProbe(processResult: processResult)
-            #expect(result.observation.nodeContext == nil)
-            #expect(result.observation.nodeAttention != nil)
+            #expect(selectedContext(result.observation) == nil)
+            #expect(nodeAttention(result.observation) != nil)
             #expect(result.calls.filter { $0.first == "exec" }.count == 1)
         }
     }
@@ -777,12 +835,8 @@ struct ProvisioningRuntimePolicyTests {
 
     @Test("pnpm absence from an empty candidate set remains missing")
     func emptyPnpmCandidateSetIsMissing() {
-        let observation = ProvisioningInspector.PnpmObservation.noCandidate
-        let check = ProvisioningInspector.pnpmCheck(for: nil, observed: observation)
-
-        #expect(observation.executableURL == nil)
-        #expect(observation.failure == nil)
-        #expect(!observation.foundExecutable)
+        let outcome = ProvisioningInspector.PnpmOutcome.missing
+        let check = ProvisioningInspector.pnpmCheck(for: outcome, selectedNodeVersion: "24.21.0")
         if case .missing = check.state {
             // Expected: an actually empty candidate set remains installable.
         } else {
@@ -793,13 +847,8 @@ struct ProvisioningRuntimePolicyTests {
     @Test("a real pnpm candidate failure stays attention with its concrete path")
     func pnpmCandidateFailureRetainsPath() {
         let path = URL(fileURLWithPath: "/opt/homebrew/bin/pnpm")
-        let observation = ProvisioningInspector.PnpmObservation(
-            version: nil,
-            executableURL: path,
-            failure: "exit 1",
-            foundExecutable: true
-        )
-        let check = ProvisioningInspector.pnpmCheck(for: nil, observed: observation)
+        let outcome = ProvisioningInspector.PnpmOutcome.unusable(executableURL: path, reason: "exit 1")
+        let check = ProvisioningInspector.pnpmCheck(for: outcome, selectedNodeVersion: "24.21.0")
 
         if case let .attention(detail) = check.state {
             #expect(detail.contains(path.path))
@@ -811,14 +860,8 @@ struct ProvisioningRuntimePolicyTests {
 
     @Test("an unknown pnpm probe caused by budget exhaustion is not missing")
     func exhaustedPnpmProbeNeedsAttention() {
-        let observation = ProvisioningInspector.PnpmObservation(
-            version: nil,
-            executableURL: nil,
-            failure: "Runtime inspection budget exhausted.",
-            foundExecutable: false,
-            budgetExhausted: true
-        )
-        let check = ProvisioningInspector.pnpmCheck(for: nil, observed: observation)
+        let outcome = ProvisioningInspector.PnpmOutcome.budgetExhausted("Runtime inspection budget exhausted.")
+        let check = ProvisioningInspector.pnpmCheck(for: outcome, selectedNodeVersion: "24.21.0")
 
         if case .attention = check.state {
             // Expected: an unknown result is not an installable absence.
@@ -828,26 +871,40 @@ struct ProvisioningRuntimePolicyTests {
     }
 
     @Test("accepted Homebrew pnpm remains ready for selected Node 24.21")
-    func acceptedHomebrewPnpmRemainsReady() {
+    func acceptedHomebrewPnpmRemainsReady() throws {
+        let fixture = try makeValidatedNode()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let context = ProvisioningRuntimeContext(
-            nodeVersion: "24.21.0",
-            nodeExecutableURL: URL(fileURLWithPath: "/Users/test/.local/share/fnm/node-versions/v24.21.0/installation/bin/node"),
-            pnpmVersion: nil,
-            pnpmExecutableURL: nil,
+            node: fixture.node,
+            pnpm: nil,
             fnmExecutableURL: URL(fileURLWithPath: "/opt/homebrew/bin/fnm"),
             fnmSelector: "24.21.0",
-            chosenFNMDirectoryURL: URL(fileURLWithPath: "/Users/test/.local/share/fnm", isDirectory: true)
+            chosenFNMDirectoryURL: fixture.root
         )
         let path = URL(fileURLWithPath: "/opt/homebrew/bin/pnpm")
-        let observation = ProvisioningInspector.PnpmObservation(
-            version: "12.6.0",
-            executableURL: path,
-            failure: nil,
-            foundExecutable: true
-        )
-        let check = ProvisioningInspector.pnpmCheck(for: context, observed: observation)
+        let outcome = ProvisioningInspector.PnpmOutcome.ready(ProvisioningPnpmTool(version: "12.6.0", executableURL: path))
+        let check = ProvisioningInspector.pnpmCheck(for: outcome, selectedNodeVersion: context.node.version)
 
         #expect(check.state == .ready("pnpm 12.6.0; path: /opt/homebrew/bin/pnpm; selected Node: 24.21.0"))
+    }
+
+    @Test("context normalizes accepted pnpm build metadata while the row keeps the report")
+    func contextNormalizesAcceptedPnpmBuildMetadata() throws {
+        let fixture = try makeValidatedNode()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let pnpmURL = URL(fileURLWithPath: "/opt/homebrew/bin/pnpm")
+        let selected = ProvisioningInspector.SelectedRuntime(
+            node: fixture.node,
+            fnmExecutableURL: URL(fileURLWithPath: "/opt/homebrew/bin/fnm"),
+            fnmSelector: "24.21.0",
+            root: fixture.root,
+            pnpm: .ready(ProvisioningPnpmTool(version: "12.6.0+build.7", executableURL: pnpmURL))
+        )
+        let mapped = ProvisioningInspector.runtimeChecks(for: .selected(selected))
+        #expect(mapped.context?.pnpm?.version == "12.6.0")
+        #expect(mapped.context?.pnpm?.executableURL == pnpmURL)
+        #expect(mapped.context?.hasUsablePnpm == true)
+        #expect(mapped.pnpm.state == .ready("pnpm 12.6.0+build.7; path: /opt/homebrew/bin/pnpm; selected Node: 24.21.0"))
     }
 
     @Test("a readable empty root is an authoritative zero-command absence")
@@ -870,9 +927,9 @@ struct ProvisioningRuntimePolicyTests {
             homeDirectory: home
         )
         #expect(spy.calls.isEmpty)
-        #expect(observation.chosenFNMDirectoryURL == selectedRoot)
-        #expect(observation.nodeAttention == nil)
-        #expect(observation.nodeContext == nil)
+        #expect(chosenRoot(observation) == selectedRoot)
+        #expect(nodeAttention(observation) == nil)
+        #expect(selectedContext(observation) == nil)
     }
 
     @Test("a bad managed candidate is rejected before node or pnpm execution")
@@ -897,9 +954,8 @@ struct ProvisioningRuntimePolicyTests {
             executableAvailable: { _ in false }
         )
         #expect(spy.calls == [["list"]])
-        #expect(observation.nodeContext == nil)
-        #expect(observation.pnpmObservation == nil)
-        #expect(observation.nodeAttention != nil)
+        if case .attention = observation {} else { #expect(Bool(false), "A rejected candidate needs an explicit attention outcome") }
+        #expect(nodeAttention(observation) != nil)
     }
 
     @Test("the actual inspector route transitions from no fnm to no Node to managed Node and pnpm")
@@ -961,6 +1017,33 @@ struct ProvisioningRuntimePolicyTests {
         } else {
             #expect(Bool(false))
         }
+        if case .ready = checks.pnpm.state {} else {
+            #expect(Bool(false), "working pnpm is still reported independently")
+        }
+        #expect(checks.context?.pnpm == nil)
+        #expect(checks.context?.hasUsablePnpm == false)
+    }
+
+    @Test("inspector skips unsupported pnpm and selects a later supported global candidate")
+    func unsupportedPnpmFallsThroughToGlobalCandidate() async {
+        let observation = await inspectTranscript(.unsupportedPnpmThenGlobal)
+        let checks = ProvisioningInspector.runtimeChecks(for: observation)
+        if case .ready = checks.pnpm.state {} else { #expect(Bool(false)) }
+        #expect(checks.context?.pnpm?.executableURL.path == "/opt/homebrew/bin/pnpm")
+        #expect(checks.context?.hasUsablePnpm == true)
+    }
+
+    @Test("a failed pnpm candidate is superseded by budget exhaustion")
+    func failedPnpmThenBudgetExhaustionPreservesRanking() async {
+        let observation = await inspectTranscript(.pnpmFailureThenBudget)
+        if case let .selected(runtime) = observation {
+            if case .budgetExhausted = runtime.pnpm {} else { #expect(Bool(false), "budget exhaustion outranks an earlier failed candidate") }
+            #expect(runtime.context.pnpm == nil)
+        } else {
+            #expect(Bool(false), "the managed Node remains selected while pnpm inspection is unknown")
+        }
+        let checks = ProvisioningInspector.runtimeChecks(for: observation)
+        if case .attention = checks.pnpm.state {} else { #expect(Bool(false)) }
     }
 
     @Test("ready labels retain actual detected versions")
@@ -1019,20 +1102,24 @@ struct ProvisioningRuntimePolicyTests {
         case unexpectedInventoryFailure
         case malformedDefaultAlias
         case unsupportedConfiguredDefault
+        case unsupportedPnpmThenGlobal
+        case pnpmFailureThenBudget
     }
 
     private func inspectTranscript(_ stage: TranscriptStage) async -> ProvisioningInspector.RuntimeObservation {
         let fnm = URL(fileURLWithPath: "/tmp/fnm-transcript/fnm")
         let facts: ProvisioningFNMRootEvidence
         switch stage {
-        case .emptyStore, .emptyStoreChangedError, .managedNodeAndHomebrewPnpm, .managedNode, .systemDefaultWithManagedInventory, .unsupportedConfiguredDefault:
+        case .emptyStore, .emptyStoreChangedError, .managedNodeAndHomebrewPnpm, .managedNode, .systemDefaultWithManagedInventory, .unsupportedConfiguredDefault, .unsupportedPnpmThenGlobal, .pnpmFailureThenBudget:
             facts = ProvisioningFNMRootEvidence(
                 hasConfiguredDefault: !(stage == .emptyStore || stage == .emptyStoreChangedError || stage == .systemDefaultWithManagedInventory),
                 hasInstalledInventory: !(stage == .emptyStore || stage == .emptyStoreChangedError),
                 inventory: stage == .emptyStore || stage == .emptyStoreChangedError
                     ? .knownEmpty
                     : .knownVersions(stage == .unsupportedConfiguredDefault ? ["v20.0.0", "v24.21.0"] : ["v24.21.0"]),
-                defaultAlias: stage == .emptyStore || stage == .emptyStoreChangedError || stage == .systemDefaultWithManagedInventory ? .absent : .managed
+                defaultAlias: stage == .emptyStore || stage == .emptyStoreChangedError
+                    ? .absent
+                    : stage == .systemDefaultWithManagedInventory ? .external : .managed
             )
         case .unexpectedInventoryFailure:
             facts = ProvisioningFNMRootEvidence(inventory: .unknown, defaultAlias: .unknown, rootReadable: false)
@@ -1043,7 +1130,7 @@ struct ProvisioningRuntimePolicyTests {
         return await ProvisioningInspector.inspectFNMRuntime(
             using: fnm,
             budget: ProvisioningInspector.RuntimeInspectionBudget(),
-            run: { _, arguments, environment, _ in
+            run: { executable, arguments, environment, _ in
                 let root = environment["FNM_DIR"] ?? "/tmp/fnm-transcript"
                 let nodePath = root + "/node-versions/v24.21.0/installation/bin/node"
                 let unsupportedNodePath = root + "/node-versions/v20.0.0/installation/bin/node"
@@ -1060,7 +1147,7 @@ struct ProvisioningRuntimePolicyTests {
                         return ProvisioningProcessResult(succeeded: true, stdout: "* system\n", stderr: "", terminationStatus: 0, timedOut: false)
                     }
                     return ProvisioningProcessResult(succeeded: false, stdout: "", stderr: "configuration unavailable", terminationStatus: 1, timedOut: false)
-                case .managedNode, .managedNodeAndHomebrewPnpm, .systemDefaultWithManagedInventory, .unsupportedConfiguredDefault:
+                case .managedNode, .managedNodeAndHomebrewPnpm, .systemDefaultWithManagedInventory, .unsupportedConfiguredDefault, .unsupportedPnpmThenGlobal, .pnpmFailureThenBudget:
                     if arguments == ["list"] {
                         let list = stage == .unsupportedConfiguredDefault ? "v20.0.0\nv24.21.0\n" : "* v24.21.0\n"
                         return ProvisioningProcessResult(succeeded: true, stdout: list, stderr: "", terminationStatus: 0, timedOut: false)
@@ -1080,6 +1167,15 @@ struct ProvisioningRuntimePolicyTests {
                         return ProvisioningProcessResult(succeeded: true, stdout: "{\"version\":\"" + version + "\",\"execPath\":\"" + path + "\"}\n", stderr: "", terminationStatus: 0, timedOut: false)
                     }
                     if arguments == ["--version"] {
+                        if stage == .unsupportedPnpmThenGlobal {
+                            let version = executable.path.hasSuffix("/installation/bin/pnpm") ? "9.0.0\n" : "12.6.0\n"
+                            return ProvisioningProcessResult(succeeded: true, stdout: version, stderr: "", terminationStatus: 0, timedOut: false)
+                        }
+                        if stage == .pnpmFailureThenBudget {
+                            return executable.path.hasSuffix("/installation/bin/pnpm")
+                                ? ProvisioningProcessResult(succeeded: false, stdout: "", stderr: "pnpm failed", terminationStatus: 1, timedOut: false)
+                                : nil
+                        }
                         return ProvisioningProcessResult(succeeded: true, stdout: "12.6.0\n", stderr: "", terminationStatus: 0, timedOut: false)
                     }
                     return nil
@@ -1088,13 +1184,61 @@ struct ProvisioningRuntimePolicyTests {
             filesystemFacts: { _ in facts },
             executableAvailable: { url in
                 if url.path == "/opt/homebrew/bin/pnpm" {
-                    return stage == .managedNodeAndHomebrewPnpm
+                    return stage == .managedNodeAndHomebrewPnpm || stage == .unsupportedConfiguredDefault || stage == .unsupportedPnpmThenGlobal || stage == .pnpmFailureThenBudget
+                }
+                if (stage == .unsupportedPnpmThenGlobal || stage == .pnpmFailureThenBudget),
+                   url.path.hasSuffix("/installation/bin/pnpm") {
+                    return true
                 }
                 // The injected spy represents concrete managed Node files as
                 // executable; production uses FileManager for the same check.
                 return url.path.contains("/node-versions/") && url.path.hasSuffix("/installation/bin/node")
             }
         )
+    }
+}
+
+private func makeValidatedNode(version: String = "24.21.0") throws -> (node: ProvisioningManagedNode, root: URL) {
+    let fileManager = FileManager.default
+    let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        .appendingPathComponent("dev-manager-managed-node-\(version)-\(UUID().uuidString)", isDirectory: true)
+    let expected = root.appendingPathComponent("node-versions/v\(version)/installation/bin/node")
+    try fileManager.createDirectory(at: expected.deletingLastPathComponent(), withIntermediateDirectories: true)
+    guard fileManager.createFile(atPath: expected.path, contents: Data()) else {
+        throw NSError(domain: "ProvisioningRuntimePolicyTests", code: 1)
+    }
+    try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: expected.path)
+    let result = ProvisioningManagedNode.validated(
+        reportedVersion: "v\(version)",
+        actualExecutablePath: expected.path,
+        selector: "v\(version)",
+        expectedExecutableURL: expected,
+        root: root,
+        executableAvailable: { FileManager.default.isExecutableFile(atPath: $0.path) }
+    )
+    guard let node = result.node else {
+        throw NSError(domain: "ProvisioningRuntimePolicyTests", code: 2, userInfo: [NSLocalizedDescriptionKey: result.failure ?? "validation failed"])
+    }
+    return (node, root)
+}
+
+private func chosenRoot(_ observation: ProvisioningInspector.RuntimeObservation) -> URL? {
+    switch observation {
+    case let .missing(root, _), let .attention(root, _): return root
+    case let .selected(runtime): return runtime.root
+    }
+}
+
+private func selectedContext(_ observation: ProvisioningInspector.RuntimeObservation) -> ProvisioningRuntimeContext? {
+    if case let .selected(runtime) = observation { return runtime.context }
+    return nil
+}
+
+private func nodeAttention(_ observation: ProvisioningInspector.RuntimeObservation) -> String? {
+    switch observation {
+    case let .attention(_, reason): return reason
+    case let .selected(runtime): return runtime.attention
+    case .missing: return nil
     }
 }
 #endif

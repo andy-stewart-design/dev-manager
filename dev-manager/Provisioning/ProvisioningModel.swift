@@ -504,7 +504,7 @@ final class ProvisioningModel: ObservableObject {
             result = await ProvisioningRuntimeInstaller.installNode(using: fnm, fnmDirectoryURL: chosenFNMDirectoryURL)
         case .pnpm:
             guard let context = runtimeContext else { finishToolOperation(id, operationID: operationID); return }
-            showProgress("Installing pnpm \(Self.pnpmVersion) inside Node \(context.nodeVersion)…")
+            showProgress("Installing pnpm \(Self.pnpmVersion) inside Node \(context.node.version)…")
             result = await ProvisioningRuntimeInstaller.installPnpm(using: context)
         case .developerTools, .homebrew:
             finishToolOperation(id, operationID: operationID)
@@ -578,11 +578,11 @@ final class ProvisioningModel: ObservableObject {
     func configureShell() throws {
         isShowingShellConfigurationConsent = false
         installationFailureLogURL = nil
-        guard canConfigureShell, let context = runtimeContext,
-              let fnmURL = context.fnmExecutableURL,
-              let selector = context.fnmSelector else {
+        guard canConfigureShell, let context = runtimeContext else {
             throw ProvisioningShellConfiguration.ConfigurationError.unsupported("a supported fnm-managed Node/pnpm context is not ready")
         }
+        let fnmURL = context.fnmExecutableURL
+        let selector = context.fnmSelector
         isConfiguringShell = true
         showProgress("Configuring the optional shell…")
         defer { isConfiguringShell = false }
@@ -617,7 +617,7 @@ final class ProvisioningModel: ObservableObject {
             }
             if let context = runtimeContext {
                 environment["PATH"] = ProvisioningExecutablePaths.runtimePATH(
-                    selectedNodeURL: context.nodeExecutableURL,
+                    selectedNodeURL: context.node.executableURL,
                     inheritedPATH: environment["PATH"] ?? "",
                     safeSystemPATH: ProvisioningConfiguration.safeSystemPATH
                 )

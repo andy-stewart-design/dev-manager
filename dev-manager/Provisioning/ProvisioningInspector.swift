@@ -148,30 +148,31 @@ nonisolated enum ProvisioningInspector {
         context: ProvisioningRuntimeContext?,
         chosenFNMDirectoryURL: URL?
     ) {
-        if let nodeContext = observation.nodeContext {
+        switch observation {
+        case let .selected(runtime):
             let node: ProvisioningCheck
-            if let attention = observation.nodeAttention {
+            if let attention = runtime.attention {
                 node = ProvisioningCheck(id: .node, state: .attention(attention))
             } else {
-                let detail = nodeDetail(for: nodeContext) + (observation.nodeNote.map { "; \($0)" } ?? "")
+                let detail = nodeDetail(for: runtime.node) + (runtime.note.map { "; \($0)" } ?? "")
                 node = ProvisioningCheck(id: .node, state: .ready(detail))
             }
-            let pnpm = pnpmCheck(for: nodeContext, observed: observation.pnpmObservation)
-            return (node, pnpm, observation.pair ?? nodeContext, observation.chosenFNMDirectoryURL)
+            return (node, pnpmCheck(for: runtime.pnpm, selectedNodeVersion: runtime.node.version), runtime.context, runtime.root)
+        case let .attention(root, reason):
+            return (
+                ProvisioningCheck(id: .node, state: .attention(reason)),
+                ProvisioningCheck(id: .pnpm, state: .unverified("A managed Node is required before pnpm can be checked or installed.")),
+                nil,
+                root
+            )
+        case let .missing(root, reason):
+            return (
+                ProvisioningCheck(id: .node, state: .missing(reason)),
+                ProvisioningCheck(id: .pnpm, state: .unverified("A managed Node is required before pnpm can be checked or installed.")),
+                nil,
+                root
+            )
         }
-
-        let node: ProvisioningCheck
-        if let attention = observation.nodeAttention {
-            node = ProvisioningCheck(id: .node, state: .attention(attention))
-        } else {
-            node = ProvisioningCheck(id: .node, state: .missing("No supported managed Node was found in fnm. A new install targets Node \(ProvisioningRuntimePolicy.recommendedNodeVersion); supported stable majors are 22, 24, and 26."))
-        }
-        return (
-            node,
-            ProvisioningCheck(id: .pnpm, state: .unverified("A managed Node is required before pnpm can be checked or installed.")),
-            nil,
-            observation.chosenFNMDirectoryURL
-        )
     }
 
     nonisolated struct RuntimeInspectionBudget: Sendable {
@@ -188,49 +189,72 @@ nonisolated enum ProvisioningInspector {
         }
     }
 
-    nonisolated struct RuntimeObservation {
-        let pair: ProvisioningRuntimeContext?
-        let nodeContext: ProvisioningRuntimeContext?
-        let pnpmObservation: PnpmObservation?
-        let nodeAttention: String?
-        let nodeNote: String?
-        let chosenFNMDirectoryURL: URL?
+    nonisolated enum RuntimeObservation: Equatable, Sendable {
+        case missing(root: URL?, reason: String)
+        case attention(root: URL?, reason: String)
+        case selected(SelectedRuntime)
+    }
+
+    nonisolated struct SelectedRuntime: Equatable, Sendable {
+        let node: ProvisioningManagedNode
+        let fnmExecutableURL: URL
+        let fnmSelector: String
+        let root: URL
+        let pnpm: PnpmOutcome
+        let attention: String?
+        let note: String?
 
         init(
-            pair: ProvisioningRuntimeContext?,
-            nodeContext: ProvisioningRuntimeContext?,
-            pnpmObservation: PnpmObservation?,
-            nodeAttention: String?,
-            nodeNote: String? = nil,
-            chosenFNMDirectoryURL: URL? = nil
+            node: ProvisioningManagedNode,
+            fnmExecutableURL: URL,
+            fnmSelector: String,
+            root: URL,
+            pnpm: PnpmOutcome,
+            attention: String? = nil,
+            note: String? = nil
         ) {
-            self.pair = pair
-            self.nodeContext = nodeContext
-            self.pnpmObservation = pnpmObservation
-            self.nodeAttention = nodeAttention
-            self.nodeNote = nodeNote
-            self.chosenFNMDirectoryURL = chosenFNMDirectoryURL
+            self.node = node
+            self.fnmExecutableURL = fnmExecutableURL
+            self.fnmSelector = fnmSelector
+            self.root = root
+            self.pnpm = pnpm
+            self.attention = attention
+            self.note = note
+        }
+
+        var context: ProvisioningRuntimeContext {
+            let usablePnpm: ProvisioningPnpmTool?
+            if case let .ready(tool) = pnpm,
+               ProvisioningRuntimePolicy.supportsPair(nodeVersion: node.version, pnpmVersion: tool.version),
+               let normalizedVersion = ProvisioningRuntimePolicy.normalizedVersion(tool.version) {
+                // Keep the row's reported version intact, but preserve the
+                // baseline context's normalized tool version (notably for
+                // build metadata such as 12.6.0+build.1).
+                usablePnpm = ProvisioningPnpmTool(version: normalizedVersion, executableURL: tool.executableURL)
+            } else {
+                // A supported pnpm is only a usable runtime pair when the
+                // selected Node is supported too. The pnpm row still reports
+                // the detected tool independently.
+                usablePnpm = nil
+            }
+            return ProvisioningRuntimeContext(
+                node: node,
+                pnpm: usablePnpm,
+                fnmExecutableURL: fnmExecutableURL,
+                fnmSelector: fnmSelector,
+                chosenFNMDirectoryURL: root
+            )
         }
     }
 
-    nonisolated struct PnpmObservation {
-        let version: String?
-        let executableURL: URL?
-        let failure: String?
-        let foundExecutable: Bool
-        let budgetExhausted: Bool
-
-        init(version: String?, executableURL: URL?, failure: String?, foundExecutable: Bool, budgetExhausted: Bool = false) {
-            self.version = version
-            self.executableURL = executableURL
-            self.failure = failure
-            self.foundExecutable = foundExecutable
-            self.budgetExhausted = budgetExhausted
-        }
-
-        nonisolated static var noCandidate: PnpmObservation {
-            PnpmObservation(version: nil, executableURL: nil, failure: nil, foundExecutable: false)
-        }
+    /// Every pnpm probe result is explicit: there is no version/path/failure
+    /// optional tuple whose fields can disagree.
+    nonisolated enum PnpmOutcome: Equatable, Sendable {
+        case missing
+        case unusable(executableURL: URL, reason: String)
+        case unsupported(ProvisioningPnpmTool)
+        case ready(ProvisioningPnpmTool)
+        case budgetExhausted(String)
     }
 
     private nonisolated static func runtimeProbe(
@@ -334,7 +358,7 @@ nonisolated enum ProvisioningInspector {
         rootEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     ) async -> RuntimeObservation {
-        guard let fnmURL else { return RuntimeObservation(pair: nil, nodeContext: nil, pnpmObservation: nil, nodeAttention: nil) }
+        guard let fnmURL else { return .missing(root: nil, reason: "No supported managed Node was found in fnm. A new install targets Node \(ProvisioningRuntimePolicy.recommendedNodeVersion); supported stable majors are 22, 24, and 26.") }
 
         // Discover every legitimate root and collect bounded evidence before
         // selecting one. Root precedence is explicit and authoritative: an
@@ -350,12 +374,7 @@ nonisolated enum ProvisioningInspector {
             homeDirectory: homeDirectory,
             evidence: evidence
         ) else {
-            return RuntimeObservation(
-                pair: nil,
-                nodeContext: nil,
-                pnpmObservation: nil,
-                nodeAttention: "Could not discover an fnm data root."
-            )
+            return .attention(root: nil, reason: "Could not discover an fnm data root.")
         }
         let roots = [authoritativeRoot]
         var probes = [FNMRootProbe]()
@@ -461,12 +480,11 @@ nonisolated enum ProvisioningInspector {
             let detail = firstAttention ?? (budgetExhausted
                 ? "Runtime inspection budget exhausted before fnm's local Node roots could be checked."
                 : "Could not inspect fnm's local Node roots.")
-            return RuntimeObservation(pair: nil, nodeContext: nil, pnpmObservation: nil, nodeAttention: detail, chosenFNMDirectoryURL: roots.first)
+            return .attention(root: roots.first, reason: detail)
         }
 
         var fallbackProbe: FNMRootProbe?
-        var firstNode: ProvisioningRuntimeContext?
-        var bestPnpm: PnpmObservation?
+        var firstNode: SelectedRuntime?
         var hadUnusableSupportedNode = false
         var hadConfiguredDefaultFailure = false
 
@@ -490,15 +508,6 @@ nonisolated enum ProvisioningInspector {
                 if let failure = nodeProbe.failure { firstAttention = firstAttention ?? failure }
                 continue
             }
-            let context = ProvisioningRuntimeContext(
-                nodeVersion: node.version,
-                nodeExecutableURL: node.executableURL,
-                pnpmVersion: nil,
-                pnpmExecutableURL: nil,
-                fnmExecutableURL: fnmURL,
-                fnmSelector: selector,
-                chosenFNMDirectoryURL: probe.root
-            )
             let observation = await probePnpm(
                 root: probe.root,
                 selectedNodeURL: node.executableURL,
@@ -506,40 +515,20 @@ nonisolated enum ProvisioningInspector {
                 run: run,
                 executableAvailable: executableAvailable
             )
-            bestPnpm = betterPnpmObservation(bestPnpm, observation)
-            let nodeAttention: String?
             let unsupportedDefaultAttention: String? = ProvisioningRuntimePolicy.isSupportedNodeVersion(node.version)
                 ? nil
                 : "fnm's configured default is Node \(node.version), outside supported stable majors 22, 24, and 26; it was not replaced."
             let combinedAttention = [probe.attention, unsupportedDefaultAttention]
                 .compactMap { $0 }
                 .joined(separator: "; ")
-            nodeAttention = combinedAttention.isEmpty ? nil : combinedAttention
-            if let pnpmVersion = observation.version, let pnpmURL = observation.executableURL,
-               ProvisioningRuntimePolicy.supportsPair(nodeVersion: context.nodeVersion, pnpmVersion: pnpmVersion) {
-                return RuntimeObservation(
-                    pair: ProvisioningRuntimeContext(
-                        nodeVersion: context.nodeVersion,
-                        nodeExecutableURL: context.nodeExecutableURL,
-                        pnpmVersion: normalized(pnpmVersion),
-                        pnpmExecutableURL: pnpmURL,
-                        fnmExecutableURL: fnmURL,
-                        fnmSelector: selector,
-                        chosenFNMDirectoryURL: probe.root
-                    ),
-                    nodeContext: context,
-                    pnpmObservation: observation,
-                    nodeAttention: nodeAttention,
-                    chosenFNMDirectoryURL: probe.root
-                )
-            }
-            return RuntimeObservation(
-                pair: nil,
-                nodeContext: context,
-                pnpmObservation: observation,
-                nodeAttention: nodeAttention,
-                chosenFNMDirectoryURL: probe.root
-            )
+            return .selected(SelectedRuntime(
+                node: node,
+                fnmExecutableURL: fnmURL,
+                fnmSelector: selector,
+                root: probe.root,
+                pnpm: observation,
+                attention: combinedAttention.isEmpty ? nil : combinedAttention
+            ))
         }
 
         // No default was resolvable. Keep the first root with actual CLI inventory
@@ -596,15 +585,6 @@ nonisolated enum ProvisioningInspector {
                     hadUnusableSupportedNode = true
                     continue
                 }
-                let context = ProvisioningRuntimeContext(
-                    nodeVersion: node.version,
-                    nodeExecutableURL: node.executableURL,
-                    pnpmVersion: nil,
-                    pnpmExecutableURL: nil,
-                    fnmExecutableURL: fnmURL,
-                    fnmSelector: selector,
-                    chosenFNMDirectoryURL: probe.root
-                )
                 let observation = await probePnpm(
                     root: probe.root,
                     selectedNodeURL: node.executableURL,
@@ -612,30 +592,20 @@ nonisolated enum ProvisioningInspector {
                     run: run,
                     executableAvailable: executableAvailable
                 )
-                if firstNode == nil {
-                    firstNode = context
-                    bestPnpm = observation
+                let selected = SelectedRuntime(
+                    node: node,
+                    fnmExecutableURL: fnmURL,
+                    fnmSelector: selector,
+                    root: probe.root,
+                    pnpm: observation,
+                    attention: probe.attention,
+                    note: probe.defaultState == .unmanaged ? "fnm's unmanaged default was not changed; this existing managed Node was selected" : nil
+                )
+                if firstNode == nil { firstNode = selected }
+                if case .ready = observation {
+                    return .selected(selected)
                 }
-                if let pnpmVersion = observation.version, let pnpmURL = observation.executableURL,
-                   ProvisioningRuntimePolicy.supportsPair(nodeVersion: context.nodeVersion, pnpmVersion: pnpmVersion) {
-                    return RuntimeObservation(
-                        pair: ProvisioningRuntimeContext(
-                            nodeVersion: context.nodeVersion,
-                            nodeExecutableURL: context.nodeExecutableURL,
-                            pnpmVersion: normalized(pnpmVersion),
-                            pnpmExecutableURL: pnpmURL,
-                            fnmExecutableURL: fnmURL,
-                            fnmSelector: selector,
-                            chosenFNMDirectoryURL: probe.root
-                        ),
-                        nodeContext: context,
-                        pnpmObservation: observation,
-                        nodeAttention: probe.attention,
-                        nodeNote: probe.defaultState == .unmanaged ? "fnm's unmanaged default was not changed; this existing managed Node was selected" : nil,
-                        chosenFNMDirectoryURL: probe.root
-                    )
-                }
-                if observation.budgetExhausted {
+                if case .budgetExhausted = observation {
                     budgetExhausted = true
                     break
                 }
@@ -643,16 +613,11 @@ nonisolated enum ProvisioningInspector {
             if budgetExhausted { break }
         }
 
+        if let firstNode {
+            return .selected(firstNode)
+        }
         let attention: String?
-        if let selectedRoot = firstNode?.chosenFNMDirectoryURL,
-           let selectedRootAttention = probes.first(where: { $0.root == selectedRoot })?.attention {
-            // The selected root is authoritative. Preserve its unreadability or
-            // incomplete-inventory evidence even when a usable fallback Node was
-            // found; there are no alternate roots whose failures should leak in.
-            attention = selectedRootAttention
-        } else if firstNode != nil {
-            attention = nil
-        } else if let rootAttention = probes.compactMap(\.attention).first {
+        if let rootAttention = probes.compactMap(\.attention).first {
             attention = rootAttention
         } else if let firstAttention {
             attention = firstAttention
@@ -665,16 +630,11 @@ nonisolated enum ProvisioningInspector {
         } else {
             attention = nil
         }
-        return RuntimeObservation(
-            pair: nil,
-            nodeContext: firstNode,
-            pnpmObservation: bestPnpm,
-            nodeAttention: attention,
-            nodeNote: firstNode.flatMap { context in
-                probes.first(where: { $0.root == context.chosenFNMDirectoryURL && $0.defaultState == .unmanaged })
-                    .map { _ in "fnm's unmanaged default was not changed; this existing managed Node was selected" }
-            },
-            chosenFNMDirectoryURL: firstNode?.chosenFNMDirectoryURL ?? fallbackProbe?.root ?? probes.first?.root
+        let root = fallbackProbe?.root ?? probes.first?.root
+        if let attention { return .attention(root: root, reason: attention) }
+        return .missing(
+            root: root,
+            reason: "No supported managed Node was found in fnm. A new install targets Node \(ProvisioningRuntimePolicy.recommendedNodeVersion); supported stable majors are 22, 24, and 26."
         )
     }
 
@@ -747,14 +707,11 @@ nonisolated enum ProvisioningInspector {
         budget: RuntimeInspectionBudget,
         run: @Sendable (URL, [String], [String: String], TimeInterval) async -> ProvisioningProcessResult?,
         executableAvailable: @Sendable (URL) -> Bool
-    ) async -> PnpmObservation {
+    ) async -> PnpmOutcome {
         let environment = ProvisioningFNMContext.environment(
             basedOn: ProvisioningConfiguration.readOnlyRuntimeEnvironment,
             root: root
         )
-        // The shared absolute candidate list covers the selected Node bin,
-        // Homebrew, and the bounded inherited PATH. A missing lookup is simply
-        // no candidate; it is not evidence that pnpm was found and failed.
         return await probePnpmCandidates(
             selectedNodeURL: selectedNodeURL,
             prior: [],
@@ -772,15 +729,9 @@ nonisolated enum ProvisioningInspector {
         budget: RuntimeInspectionBudget,
         run: @Sendable (URL, [String], [String: String], TimeInterval) async -> ProvisioningProcessResult?,
         executableAvailable: @Sendable (URL) -> Bool
-    ) async -> PnpmObservation {
+    ) async -> PnpmOutcome {
         guard budget.remainingTimeout != nil else {
-            return PnpmObservation(
-                version: nil,
-                executableURL: nil,
-                failure: "Runtime inspection budget exhausted.",
-                foundExecutable: false,
-                budgetExhausted: true
-            )
+            return .budgetExhausted("Runtime inspection budget exhausted.")
         }
 
         let inheritedPATH = environment["PATH"] ?? ""
@@ -791,8 +742,7 @@ nonisolated enum ProvisioningInspector {
         )
         let priorPaths = Set(prior.map { $0.standardizedFileURL.path })
         let candidates = ordered.filter { candidate in
-            priorPaths.contains(candidate.standardizedFileURL.path) ||
-                executableAvailable(candidate)
+            priorPaths.contains(candidate.standardizedFileURL.path) || executableAvailable(candidate)
         }
         var probeEnvironment = environment
         probeEnvironment["PATH"] = ProvisioningExecutablePaths.runtimePATH(
@@ -800,7 +750,7 @@ nonisolated enum ProvisioningInspector {
             inheritedPATH: inheritedPATH
         )
 
-        var bestObservation: PnpmObservation?
+        var bestOutcome: PnpmOutcome?
         for pnpmURL in candidates {
             guard let result = await run(
                 pnpmURL,
@@ -808,79 +758,56 @@ nonisolated enum ProvisioningInspector {
                 probeEnvironment,
                 budget.remainingTimeout ?? 0
             ) else {
-                let observation = PnpmObservation(
-                    version: nil,
-                    executableURL: bestObservation?.executableURL ?? pnpmURL,
-                    failure: "Runtime inspection budget exhausted.",
-                    foundExecutable: bestObservation?.foundExecutable ?? true,
-                    budgetExhausted: true
-                )
-                return betterPnpmObservation(bestObservation, observation) ?? observation
+                let outcome = PnpmOutcome.budgetExhausted("Runtime inspection budget exhausted before pnpm could be fully checked.")
+                return betterPnpmOutcome(bestOutcome, outcome) ?? outcome
             }
-            let observation: PnpmObservation
+            let outcome: PnpmOutcome
             if result.succeeded, let version = result.stdout.firstNonEmptyLine {
-                observation = PnpmObservation(version: reportedVersion(version), executableURL: pnpmURL, failure: nil, foundExecutable: true)
+                let tool = ProvisioningPnpmTool(version: reportedVersion(version), executableURL: pnpmURL)
+                outcome = ProvisioningRuntimePolicy.isSupportedPnpmVersion(tool.version) ? .ready(tool) : .unsupported(tool)
             } else {
-                observation = PnpmObservation(
-                    version: nil,
+                outcome = .unusable(
                     executableURL: pnpmURL,
-                    failure: result.failureDescription(for: "\(pnpmURL.path) --version", timeout: ProvisioningConfiguration.commandTimeout),
-                    foundExecutable: true
+                    reason: result.failureDescription(for: "\(pnpmURL.path) --version", timeout: ProvisioningConfiguration.commandTimeout)
                 )
             }
-            if let version = observation.version,
-               ProvisioningRuntimePolicy.isSupportedPnpmVersion(version) {
-                return observation
-            }
-            bestObservation = betterPnpmObservation(bestObservation, observation)
+            if case .ready = outcome { return outcome }
+            bestOutcome = betterPnpmOutcome(bestOutcome, outcome)
         }
-        return bestObservation ?? PnpmObservation.noCandidate
+        return bestOutcome ?? .missing
     }
 
-    private nonisolated static func betterPnpmObservation(_ current: PnpmObservation?, _ candidate: PnpmObservation) -> PnpmObservation? {
+    private nonisolated static func betterPnpmOutcome(_ current: PnpmOutcome?, _ candidate: PnpmOutcome) -> PnpmOutcome? {
         guard let current else { return candidate }
-        func rank(_ observation: PnpmObservation) -> Int {
-            if observation.budgetExhausted { return 4 }
-            if observation.version != nil { return 3 }
-            if observation.foundExecutable { return 2 }
-            return 1
+        func rank(_ outcome: PnpmOutcome) -> Int {
+            switch outcome {
+            case .missing: return 1
+            case .unusable: return 2
+            case .unsupported: return 3
+            case .budgetExhausted: return 4
+            case .ready: return 5
+            }
         }
         return rank(candidate) > rank(current) ? candidate : current
     }
 
-    private nonisolated static func makeChecks(context: ProvisioningRuntimeContext) -> (node: ProvisioningCheck, pnpm: ProvisioningCheck, context: ProvisioningRuntimeContext?) {
-        let node = ProvisioningCheck(id: .node, state: .ready(nodeDetail(for: context)))
-        let pnpmDetail = context.pnpmVersion.map { "pnpm \($0); path: \(context.pnpmExecutableURL?.path ?? "unknown"); selected Node: \(context.nodeVersion)" } ?? "pnpm is not available in selected Node \(context.nodeVersion) context."
-        let pnpm = ProvisioningCheck(id: .pnpm, state: .ready(pnpmDetail))
-        return (node, pnpm, context)
-    }
-
-    nonisolated static func pnpmCheck(for context: ProvisioningRuntimeContext?, observed: PnpmObservation?) -> ProvisioningCheck {
-        guard let observed else {
+    nonisolated static func pnpmCheck(for outcome: PnpmOutcome, selectedNodeVersion: String) -> ProvisioningCheck {
+        switch outcome {
+        case .missing:
             return ProvisioningCheck(id: .pnpm, state: .missing("pnpm is not installed in the selected Node context. A new install targets pnpm \(ProvisioningRuntimePolicy.recommendedPnpmVersion); supported stable majors are 10, 11, and 12."))
+        case let .budgetExhausted(reason):
+            return ProvisioningCheck(id: .pnpm, state: .attention("\(reason) Run Check again."))
+        case let .ready(tool):
+            return ProvisioningCheck(id: .pnpm, state: .ready("pnpm \(tool.version); path: \(tool.executableURL.path); selected Node: \(selectedNodeVersion)"))
+        case let .unsupported(tool):
+            return ProvisioningCheck(id: .pnpm, state: .attention("Found pnpm \(tool.version) at \(tool.executableURL.path), outside supported stable majors 10, 11, and 12; it was not replaced."))
+        case let .unusable(url, reason):
+            return ProvisioningCheck(id: .pnpm, state: .attention("Found pnpm at \(url.path), but its version probe was unusable: \(reason). It was not replaced."))
         }
-        if observed.budgetExhausted {
-            return ProvisioningCheck(id: .pnpm, state: .attention("Runtime inspection budget exhausted before pnpm could be fully checked; run Check again."))
-        }
-        if let version = observed.version {
-            if ProvisioningRuntimePolicy.isSupportedPnpmVersion(version) {
-                let selected = context?.nodeVersion ?? "the selected Node"
-                return ProvisioningCheck(id: .pnpm, state: .ready("pnpm \(version); path: \(observed.executableURL?.path ?? "unknown"); selected Node: \(selected)"))
-            }
-            return ProvisioningCheck(id: .pnpm, state: .attention("Found pnpm \(version) at \(observed.executableURL?.path ?? "unknown"), outside supported stable majors 10, 11, and 12; it was not replaced."))
-        }
-        if observed.foundExecutable {
-            return ProvisioningCheck(id: .pnpm, state: .attention("Found pnpm at \(observed.executableURL?.path ?? "unknown"), but its version probe was unusable: \(observed.failure ?? "unknown failure"). It was not replaced."))
-        }
-        return ProvisioningCheck(id: .pnpm, state: .missing("pnpm is not installed in the selected Node context. A new install targets pnpm \(ProvisioningRuntimePolicy.recommendedPnpmVersion); supported stable majors are 10, 11, and 12."))
     }
 
-    private nonisolated static func nodeDetail(for context: ProvisioningRuntimeContext) -> String {
-        "Node \(context.nodeVersion); path: \(context.nodeExecutableURL.path)"
-    }
-
-    private nonisolated static func normalized(_ value: String) -> String {
-        ProvisioningRuntimePolicy.normalizedVersion(value) ?? reportedVersion(value)
+    private nonisolated static func nodeDetail(for node: ProvisioningManagedNode) -> String {
+        "Node \(node.version); path: \(node.executableURL.path)"
     }
 
     private nonisolated static func reportedVersion(_ value: String) -> String {

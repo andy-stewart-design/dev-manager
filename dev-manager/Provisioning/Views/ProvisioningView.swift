@@ -194,7 +194,7 @@ struct ProvisioningView: View {
         case .node:
             return "Dev Manager will install the recommended Node \(ProvisioningRuntimePolicy.recommendedNodeVersion) through the already verified fnm installation only because no usable supported Node was detected. It will not replace an accepted existing Node or install pnpm."
         case .pnpm:
-            let selectedNode = model.runtimeContext?.nodeVersion ?? "the selected Node context"
+            let selectedNode = model.runtimeContext?.node.version ?? "the selected Node context"
             return "Dev Manager will install the recommended pnpm \(ProvisioningRuntimePolicy.recommendedPnpmVersion) inside the selected Node \(selectedNode) context only because pnpm is missing. It will not replace an existing usable pnpm."
         }
     }

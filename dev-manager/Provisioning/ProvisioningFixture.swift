@@ -11,7 +11,7 @@ nonisolated enum ProvisioningFixture {
     nonisolated static func materialize(using context: ProvisioningRuntimeContext) throws -> ProvisioningFixtureResult {
         guard context.isManagedByFNM,
               context.hasUsablePnpm,
-              let pnpm = context.pnpmExecutableURL else {
+              let pnpm = context.pnpm?.executableURL else {
             throw FixtureProvisioningError.unusableRuntime
         }
         let fileManager = FileManager.default
@@ -73,24 +73,22 @@ nonisolated enum ProvisioningFixture {
     }
 
     private nonisolated static func result(folder: URL, context: ProvisioningRuntimeContext, pnpm: URL) throws -> ProvisioningFixtureResult {
-        guard let fnmURL = context.fnmExecutableURL, let selector = context.fnmSelector else {
-            throw FixtureProvisioningError.unusableRuntime
-        }
+        let fnmURL = context.fnmExecutableURL
+        let selector = context.fnmSelector
         let rootAssignment = "FNM_DIR=\(shellQuote(context.chosenFNMDirectoryURL.standardizedFileURL.path)) "
         let command = "\(rootAssignment)FNM_COREPACK_ENABLED=false \(shellQuote(fnmURL.path)) exec --using \(shellQuote(selector)) \(shellQuote(pnpm.standardizedFileURL.path)) dev"
         return ProvisioningFixtureResult(folder: folder, command: command)
     }
 
     nonisolated static func fixtureMetadataJSON(using context: ProvisioningRuntimeContext) throws -> String {
-        guard let fnmURL = context.fnmExecutableURL, let selector = context.fnmSelector else {
-            throw FixtureProvisioningError.unusableRuntime
-        }
-        let pnpm = context.pnpmVersion ?? ProvisioningRuntimePolicy.recommendedPnpmVersion
+        let fnmURL = context.fnmExecutableURL
+        let selector = context.fnmSelector
+        let pnpm = context.pnpm?.version ?? ProvisioningRuntimePolicy.recommendedPnpmVersion
         return try encodedJSON([
-            "nodeVersion": context.nodeVersion,
-            "nodePath": context.nodeExecutableURL.path,
+            "nodeVersion": context.node.version,
+            "nodePath": context.node.executableURL.path,
             "pnpmVersion": pnpm,
-            "pnpmPath": context.pnpmExecutableURL?.path ?? "",
+            "pnpmPath": context.pnpm?.executableURL.path ?? "",
             "fnmPath": fnmURL.path,
             "fnmDirectoryPath": context.chosenFNMDirectoryURL.standardizedFileURL.path,
             "fnmSelector": selector
@@ -98,13 +96,13 @@ nonisolated enum ProvisioningFixture {
     }
 
     private nonisolated static func fixtureFiles(context: ProvisioningRuntimeContext) throws -> [(name: String, contents: String)] {
-        let pnpm = context.pnpmVersion ?? ProvisioningRuntimePolicy.recommendedPnpmVersion
+        let pnpm = context.pnpm?.version ?? ProvisioningRuntimePolicy.recommendedPnpmVersion
         let packageJSON = try encodedJSON([
             "name": "dev-manager-provisioning-fixture",
             "private": true,
             "version": "1.0.0",
             "packageManager": "pnpm@\(pnpm)",
-            "engines": ["node": context.nodeVersion],
+            "engines": ["node": context.node.version],
             "scripts": ["dev": "node server.js"]
         ])
         let runtimeMetadata = try fixtureMetadataJSON(using: context)
@@ -112,7 +110,7 @@ nonisolated enum ProvisioningFixture {
             (".dev-manager-fixture", ProvisioningConfiguration.fixtureMarker),
             ("package.json", packageJSON),
             ("server.js", ProvisioningConfiguration.fixtureServerJS),
-            (".node-version", "\(context.nodeVersion)\n"),
+            (".node-version", "\(context.node.version)\n"),
             (".dev-manager-runtime.json", runtimeMetadata)
         ]
     }
