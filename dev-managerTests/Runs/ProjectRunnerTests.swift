@@ -74,12 +74,12 @@ func concurrentStopRequestsShareOneCleanupBarrier() async throws {
     #expect(!runner.activeProjectIDs.contains(project.id))
 }
 
-@Test("unterminated high-rate output stays bounded")
+@Test("high-rate short lines stay bounded")
 @MainActor
-func unterminatedHighRateOutputStaysBounded() async throws {
+func highRateShortLinesStayBounded() async throws {
     let root = try makeRunnerTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
-    let project = try makeProject(in: root, command: "yes x | head -c 500000; sleep 1")
+    let project = try makeProject(in: root, command: "/usr/bin/yes x | /usr/bin/head -c 500000; sleep 1")
     let runner = ProjectRunner(shellEnvironment: try makeTestShell(in: root))
 
     _ = runner.start(project: project)
@@ -87,7 +87,25 @@ func unterminatedHighRateOutputStaysBounded() async throws {
     let state = runner.state(for: project.id)
     let retainedBytes = state?.logs.reduce(0) { $0 + $1.text.utf8.count } ?? 0
     #expect(retainedBytes <= LogBuffer.maximumBytes)
+    #expect(state?.logs.count ?? 0 <= LogBuffer.maximumEntries)
+    #expect(state?.didTruncateLogs == true)
     #expect(state?.logs.contains { $0.text.contains("truncated") || $0.text.contains("dropped") } == true)
+}
+
+@Test("unterminated output is capped and marked")
+@MainActor
+func unterminatedOutputIsCappedAndMarked() async throws {
+    let root = try makeRunnerTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let project = try makeProject(in: root, command: "/usr/bin/head -c 131072 /dev/zero | /usr/bin/tr '\\0' x; sleep 1")
+    let runner = ProjectRunner(shellEnvironment: try makeTestShell(in: root))
+
+    _ = runner.start(project: project)
+    try await waitForInactiveState(runner, projectID: project.id)
+    let state = runner.state(for: project.id)
+    let retainedBytes = state?.logs.reduce(0) { $0 + $1.text.utf8.count } ?? 0
+    #expect(retainedBytes <= LogBuffer.maximumBytes)
+    #expect(state?.logs.contains { $0.text.contains("unterminated") || $0.text.contains("truncated") } == true)
 }
 
 @Test("missing command reports an actionable launch result")

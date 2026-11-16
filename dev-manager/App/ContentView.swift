@@ -6,6 +6,7 @@ struct ContentView: View {
     @ObservedObject var runner: ProjectRunner
     @State private var selectedProjectID: UUID?
     @State private var isShowingFolderPicker = false
+    @State private var isShowingProvisioning = false
 
     var body: some View {
         NavigationSplitView {
@@ -41,6 +42,25 @@ struct ContentView: View {
             allowsMultipleSelection: false,
             onCompletion: handleFolderSelection
         )
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    isShowingProvisioning = true
+                } label: {
+                    Label("Setup", systemImage: "wrench.and.screwdriver")
+                }
+                .help("Open tool setup and diagnostics")
+            }
+        }
+        .sheet(isPresented: $isShowingProvisioning) {
+#if DEBUG
+            ProvisioningView { folderURL, command in
+                handleFixtureHandoff(folderURL: folderURL, command: command)
+            }
+#else
+            ProvisioningView()
+#endif
+        }
         .onChange(of: store.projects) { _, projects in
             if let selectedProjectID, projects.contains(where: { $0.id == selectedProjectID }) {
                 return
@@ -51,6 +71,35 @@ struct ContentView: View {
             selectedProjectID = selectedProjectID ?? store.projects.first?.id
         }
     }
+
+#if DEBUG
+    private func handleFixtureHandoff(folderURL: URL, command: String) {
+        let normalizedPath = folderURL.standardizedFileURL.path
+        do {
+            if let existing = store.projects.first(where: { $0.folderURL.standardizedFileURL.path == normalizedPath }) {
+                guard existing.command == command else {
+                    throw FixtureProjectHandoffError.conflictingCommand(normalizedPath)
+                }
+                selectedProjectID = existing.id
+            } else {
+                let project = try store.addProject(folderURL: folderURL, command: command)
+                selectedProjectID = project.id
+            }
+        } catch {
+            store.report(error: error)
+        }
+    }
+    private enum FixtureProjectHandoffError: LocalizedError {
+        case conflictingCommand(String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .conflictingCommand(path):
+                return "The existing fixture project at \(path) has a user-modified command, so it was left unchanged."
+            }
+        }
+    }
+#endif
 
     private func handleFolderSelection(_ result: Result<[URL], Error>) {
         switch result {
