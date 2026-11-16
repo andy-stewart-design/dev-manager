@@ -19,6 +19,8 @@ final class OutputInbox: @unchecked Sendable {
     private var droppedBytes: [RunOutputStream: Int] = [:]
     private var drainScheduled = false
     private let deliver: @MainActor (RunOutputStream, Data, Bool, Int) -> Void
+    private static let maximumChunksPerTurn = 8
+    private static let maximumBytesPerTurn = 128 * 1024
 
     init(deliver: @escaping @MainActor (RunOutputStream, Data, Bool, Int) -> Void) {
         self.deliver = deliver
@@ -50,6 +52,8 @@ final class OutputInbox: @unchecked Sendable {
 
     @MainActor
     private func drain() {
+        var chunksDelivered = 0
+        var bytesDelivered = 0
         while true {
             lock.lock()
             guard !queue.isEmpty || !droppedBytes.isEmpty else {
@@ -68,6 +72,16 @@ final class OutputInbox: @unchecked Sendable {
             }
             if let chunk {
                 deliver(chunk.stream, chunk.data, chunk.eof, chunk.droppedBytes)
+                chunksDelivered += 1
+                bytesDelivered += chunk.data.count
+            }
+
+            // A delivery publishes a full run snapshot on the main actor. Yield
+            // periodically so controls and lifecycle callbacks get a turn even
+            // when readers keep filling the bounded inbox.
+            if chunksDelivered >= Self.maximumChunksPerTurn || bytesDelivered >= Self.maximumBytesPerTurn {
+                Task { @MainActor [weak self] in self?.drain() }
+                return
             }
         }
     }

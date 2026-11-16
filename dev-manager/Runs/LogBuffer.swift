@@ -4,67 +4,140 @@ import Foundation
 @MainActor
 final class LogBuffer {
     static let maximumBytes = 2 * 1024 * 1024
+    /// A byte cap alone is not enough for output made of thousands of tiny lines.
+    /// Keep the retained representation bounded by both bytes and entry metadata.
+    static let maximumEntries = 16_384
 
-    private(set) var entries: [RunLogEntry] = []
-    private(set) var didTruncate = false
+    private static let truncationMarker = "[Dev Manager truncated retained output to stay within its bounded log buffer.]\n"
+
+    private var storage: [RunLogEntry] = []
+    private var headIndex = 0
+    private var entryIndices: [UUID: Int] = [:]
+    private var truncationMarkerID: UUID?
     private var byteCount = 0
+    private(set) var didTruncate = false
+
+    var entries: [RunLogEntry] {
+        Array(storage[headIndex..<storage.endIndex])
+    }
 
     func append(runID: UUID, stream: RunOutputStream, phase: RunOutputPhase, text: String) {
         guard !text.isEmpty else { return }
-        let entry = RunLogEntry(runID: runID, stream: stream, phase: phase, text: text)
-        entries.append(entry)
-        byteCount += text.utf8.count
-        trimIfNeeded()
+        appendRaw(RunLogEntry(runID: runID, stream: stream, phase: phase, text: text))
+        trimIfNeeded(runID: runID, stream: stream, phase: phase)
     }
 
     @discardableResult
     func upsertPartial(runID: UUID, stream: RunOutputStream, phase: RunOutputPhase, text: String, entryID: UUID?) -> UUID {
         guard !text.isEmpty else { return entryID ?? UUID() }
-        if let entryID, let index = entries.firstIndex(where: { $0.id == entryID }) {
-            let oldText = entries[index].text
-            entries[index] = RunLogEntry(id: entryID, runID: runID, stream: stream, phase: phase, text: text)
+        if let entryID, let index = entryIndices[entryID], index >= headIndex {
+            let oldText = storage[index].text
+            storage[index] = RunLogEntry(id: entryID, runID: runID, stream: stream, phase: phase, text: text)
             byteCount += text.utf8.count - oldText.utf8.count
-            trimIfNeeded()
-            if entries.contains(where: { $0.id == entryID }) { return entryID }
+            trimIfNeeded(runID: runID, stream: stream, phase: phase)
+            if let currentIndex = entryIndices[entryID], currentIndex >= headIndex {
+                return entryID
+            }
         }
+
         let entry = RunLogEntry(runID: runID, stream: stream, phase: phase, text: text)
-        entries.append(entry)
-        byteCount += text.utf8.count
-        trimIfNeeded()
-        return entry.id
+        appendRaw(entry)
+        trimIfNeeded(runID: runID, stream: stream, phase: phase)
+        // A newly appended row normally survives because trimming removes the
+        // oldest rows. If an extreme bound evicts it, force the caller to start
+        // a fresh partial row rather than accidentally reusing the marker ID.
+        return entryIndices[entry.id] == nil ? UUID() : entry.id
     }
 
     @discardableResult
     func finishPartial(entryID: UUID) -> Bool {
-        guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return false }
-        let oldText = entries[index].text
+        guard let index = entryIndices[entryID], index >= headIndex else { return false }
+        let oldText = storage[index].text
         let text = oldText.hasSuffix("\n") ? oldText : oldText + "\n"
-        entries[index] = RunLogEntry(id: entryID, runID: entries[index].runID, stream: entries[index].stream, phase: entries[index].phase, text: text)
+        storage[index] = RunLogEntry(id: entryID, runID: storage[index].runID, stream: storage[index].stream, phase: storage[index].phase, text: text)
         byteCount += text.utf8.count - oldText.utf8.count
-        trimIfNeeded()
-        return entries.contains(where: { $0.id == entryID })
+        trimIfNeeded(runID: storage[index].runID, stream: storage[index].stream, phase: storage[index].phase)
+        return entryIndices[entryID] != nil
     }
 
     func snapshot() -> ([RunLogEntry], Bool) {
         (entries, didTruncate)
     }
 
-    private func trimIfNeeded() {
-        while byteCount > Self.maximumBytes, entries.count > 1 {
-            let removed = entries.removeFirst()
-            byteCount -= removed.text.utf8.count
-            didTruncate = true
+    private func appendRaw(_ entry: RunLogEntry) {
+        storage.append(entry)
+        entryIndices[entry.id] = storage.index(before: storage.endIndex)
+        byteCount += entry.text.utf8.count
+    }
+
+    private func trimIfNeeded(runID: UUID, stream: RunOutputStream, phase: RunOutputPhase) {
+        guard byteCount > Self.maximumBytes || activeEntryCount > Self.maximumEntries else { return }
+        didTruncate = true
+
+        // Reserve room for an explanatory marker before adding it. This also makes
+        // the single-entry case useful: retain the tail of a huge write rather than
+        // dropping the whole line just to make room for the marker.
+        if truncationMarkerID == nil {
+            trimRaw(byteLimit: max(0, Self.maximumBytes - Self.truncationMarker.utf8.count), entryLimit: max(1, Self.maximumEntries - 1))
+            let marker = RunLogEntry(runID: runID, stream: stream, phase: phase, text: Self.truncationMarker)
+            appendRaw(marker)
+            truncationMarkerID = marker.id
         }
 
-        // A single write can be larger than the cap. Retain its useful tail rather than
-        // allowing one entry to defeat the bound.
-        if let only = entries.first, entries.count == 1, only.text.utf8.count > Self.maximumBytes {
-            let bytes = Array(only.text.utf8.suffix(Self.maximumBytes))
-            let retained = String(decoding: bytes, as: UTF8.self)
-            entries[0] = RunLogEntry(id: only.id, runID: only.runID, stream: only.stream, phase: only.phase, text: retained)
-            byteCount = retained.utf8.count
-            didTruncate = true
+        trimRaw(byteLimit: Self.maximumBytes, entryLimit: Self.maximumEntries)
+        // The marker can itself become the oldest retained entry after later output.
+        // Reinsert it at the tail so the current snapshot always explains truncation.
+        if truncationMarkerID == nil {
+            trimRaw(byteLimit: max(0, Self.maximumBytes - Self.truncationMarker.utf8.count), entryLimit: max(1, Self.maximumEntries - 1))
+            let marker = RunLogEntry(runID: runID, stream: stream, phase: phase, text: Self.truncationMarker)
+            appendRaw(marker)
+            truncationMarkerID = marker.id
+            trimRaw(byteLimit: Self.maximumBytes, entryLimit: Self.maximumEntries)
         }
+        compactIfUseful()
+    }
+
+    private var activeEntryCount: Int { storage.count - headIndex }
+
+    private func trimRaw(byteLimit: Int, entryLimit: Int) {
+        while activeEntryCount > entryLimit || byteCount > byteLimit {
+            if activeEntryCount == 0 { return }
+            if activeEntryCount == 1 {
+                guard byteCount > byteLimit else {
+                    removeOldest()
+                    continue
+                }
+                let index = headIndex
+                let entry = storage[index]
+                let bytes = Array(entry.text.utf8.suffix(max(0, byteLimit)))
+                let retained = String(decoding: bytes, as: UTF8.self)
+                storage[index] = RunLogEntry(id: entry.id, runID: entry.runID, stream: entry.stream, phase: entry.phase, text: retained)
+                byteCount = retained.utf8.count
+                return
+            }
+            removeOldest()
+        }
+    }
+
+    private func removeOldest() {
+        guard headIndex < storage.endIndex else { return }
+        let removed = storage[headIndex]
+        entryIndices.removeValue(forKey: removed.id)
+        if truncationMarkerID == removed.id { truncationMarkerID = nil }
+        byteCount -= removed.text.utf8.count
+        // Keep the tombstone's metadata for amortized compaction, but release the
+        // potentially large payload as soon as the entry leaves the active window.
+        storage[headIndex] = RunLogEntry(id: removed.id, runID: removed.runID, stream: removed.stream, phase: removed.phase, text: "")
+        headIndex += 1
+        compactIfUseful()
+    }
+
+    private func compactIfUseful() {
+        guard headIndex > 1024, headIndex * 2 >= storage.count else { return }
+        storage.removeFirst(headIndex)
+        headIndex = 0
+        entryIndices.removeAll(keepingCapacity: true)
+        for index in storage.indices { entryIndices[storage[index].id] = index }
     }
 }
 
@@ -80,38 +153,66 @@ final class RunOutputAccumulator {
     func consume(data: Data, stream: RunOutputStream, phase: RunOutputPhase, runID: UUID, logBuffer: LogBuffer) {
         var remainder = partialLines[stream] ?? Data()
         var cursor = data.startIndex
+
         while cursor < data.endIndex {
-            guard let delimiter = data[cursor...].firstIndex(where: { $0 == 10 || $0 == 13 }) else {
-                remainder.append(data[cursor...])
-                break
+            var delimiter = cursor
+            while delimiter < data.endIndex, data[delimiter] != 10, data[delimiter] != 13 {
+                delimiter = data.index(after: delimiter)
             }
             remainder.append(data[cursor..<delimiter])
+
+            if delimiter == data.endIndex {
+                break
+            }
+
             if data[delimiter] == 10 {
-                if !remainder.isEmpty { publishPartial(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer) }
-                if remainder.isEmpty, let entryID = partialEntryIDs.removeValue(forKey: stream) {
-                    _ = logBuffer.finishPartial(entryID: entryID)
+                if remainder.isEmpty {
+                    if let entryID = partialEntryIDs.removeValue(forKey: stream) {
+                        _ = logBuffer.finishPartial(entryID: entryID)
+                    } else {
+                        // LF still represents a real blank output line.
+                        appendLine(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+                    }
+                } else if partialEntryIDs[stream] != nil {
+                    // A CR or an earlier chunk exposed this as progress. Update that
+                    // one entry once, then finish it; do not create a second row.
+                    publishPartial(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+                    _ = finishCurrentPartial(stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
                 } else {
-                    consumeLine(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+                    // Complete LF-terminated lines do not need a temporary upsert.
+                    appendLine(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
                 }
                 remainder.removeAll(keepingCapacity: true)
             } else {
-                publishPartial(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+                // CR is a progress update. Keep its latest text in one stream-local
+                // entry until a later LF or EOF supplies the terminating newline.
+                if !remainder.isEmpty {
+                    publishPartial(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+                }
                 remainder.removeAll(keepingCapacity: true)
             }
             cursor = data.index(after: delimiter)
         }
+
         if remainder.count > Self.maximumIncompleteLineBytes {
             let excess = remainder.count - Self.maximumIncompleteLineBytes
             remainder = Data(remainder.suffix(Self.maximumIncompleteLineBytes))
             partialLineDroppedBytes[stream, default: 0] += excess
         }
         partialLines[stream] = remainder
-        if !remainder.isEmpty { publishPartial(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer) }
+        if !remainder.isEmpty {
+            publishPartial(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+        }
     }
 
     func finish(stream: RunOutputStream, phase: RunOutputPhase, runID: UUID, logBuffer: LogBuffer) {
         if let remainder = partialLines.removeValue(forKey: stream), !remainder.isEmpty {
-            consumeLine(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+            if partialEntryIDs[stream] != nil {
+                publishPartial(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+                _ = finishCurrentPartial(stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+            } else {
+                appendLine(remainder, stream: stream, phase: phase, runID: runID, logBuffer: logBuffer)
+            }
         } else if let entryID = partialEntryIDs.removeValue(forKey: stream) {
             _ = logBuffer.finishPartial(entryID: entryID)
         }
@@ -126,6 +227,18 @@ final class RunOutputAccumulator {
         guard !text.isEmpty else { return }
         let entryID = logBuffer.upsertPartial(runID: runID, stream: stream, phase: phase, text: text, entryID: partialEntryIDs[stream])
         partialEntryIDs[stream] = entryID
+    }
+
+    private func finishCurrentPartial(stream: RunOutputStream, phase: RunOutputPhase, runID: UUID, logBuffer: LogBuffer) -> Bool {
+        guard let entryID = partialEntryIDs.removeValue(forKey: stream) else { return false }
+        if logBuffer.finishPartial(entryID: entryID) { return true }
+        return false
+    }
+
+    private func appendLine(_ data: Data, stream: RunOutputStream, phase: RunOutputPhase, runID: UUID, logBuffer: LogBuffer) {
+        var line = String(decoding: data, as: UTF8.self)
+        if line.last == "\r" { line.removeLast() }
+        logBuffer.append(runID: runID, stream: stream, phase: phase, text: line + "\n")
     }
 
     private func partialDisplayText(_ data: Data) -> String {
@@ -148,17 +261,5 @@ final class RunOutputAccumulator {
             else if expectedCount < continuationCount { validEnd = trailingStart }
         }
         return String(decoding: bytes.prefix(validEnd), as: UTF8.self)
-    }
-
-    private func consumeLine(_ data: Data, stream: RunOutputStream, phase: RunOutputPhase, runID: UUID, logBuffer: LogBuffer) {
-        var line = String(decoding: data, as: UTF8.self)
-        if line.last == "\r" { line.removeLast() }
-        if let entryID = partialEntryIDs.removeValue(forKey: stream) {
-            if !logBuffer.finishPartial(entryID: entryID) {
-                logBuffer.append(runID: runID, stream: stream, phase: phase, text: line + "\n")
-            }
-            return
-        }
-        logBuffer.append(runID: runID, stream: stream, phase: phase, text: line + "\n")
     }
 }
