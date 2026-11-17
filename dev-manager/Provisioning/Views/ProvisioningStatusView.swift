@@ -37,6 +37,8 @@ struct ProvisioningStatusView: View {
                 fullWidthDivider
                 statusRow(for: .homebrew)
                 fullWidthDivider
+                statusRow(for: .githubCLI)
+                fullWidthDivider
                 nodeEnvironment
 
                 if model.allRuntimeToolsReady {
@@ -294,6 +296,7 @@ struct ProvisioningStatusView: View {
         switch id {
         case .node: return model.runtimeContext?.node.version
         case .pnpm: return model.runtimeContext?.pnpm?.version
+        case .githubCLI: return model.githubCLIContext?.version
         default: return nil
         }
     }

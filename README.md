@@ -12,7 +12,7 @@ The settings gear exposes project metadata, the command, and entry removal (remo
 - Each project’s dependencies installed separately
 - A project command that can run through a zsh login/interactive environment
 
-The optional Setup surface checks supported local Apple developer tools, Homebrew, fnm, Node, and pnpm. It can hand off Apple Command Line Tools to Apple’s graphical installer and Homebrew.pkg to macOS Installer; Dev Manager does not collect passwords or perform those privileged GUI steps itself. It can optionally add or restore its marked fnm block in `~/.zshrc`, with explicit consent; it never edits `~/.zprofile`.
+The optional Setup surface checks supported local Apple developer tools, Homebrew, fnm, Node, pnpm, and an optional GitHub CLI binary. GitHub CLI is independent of Node and can be reused or explicitly installed through Homebrew; this binary capability does not claim authentication. The surface is available alongside existing provisioning in Debug and Release. Setup can hand off Apple Command Line Tools to Apple's graphical installer and Homebrew.pkg to macOS Installer; Dev Manager does not collect passwords or perform those privileged GUI steps itself. It can optionally add or restore its marked fnm block in `~/.zshrc`, with explicit consent; it never edits `~/.zprofile`.
 
 Setup accepts stable Node 22/24/26 and pnpm 10/11/12 after checking that they run together; exact patch versions are not required. Existing usable versions are reused without automatic upgrades. Node must be managed by the supported version manager (currently fnm); standalone Node installations are not adopted or probed for readiness. fnm is the required backend when Node or pnpm setup is needed.
 

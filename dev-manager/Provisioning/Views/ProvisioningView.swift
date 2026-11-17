@@ -179,6 +179,7 @@ struct ProvisioningView: View {
         switch id {
         case .developerTools: return "Request Apple installer"
         case .homebrew: return "Download and open Homebrew.pkg"
+        case .githubCLI: return "Install GitHub CLI"
         default: return "Install \(id.title)"
         }
     }
@@ -196,6 +197,8 @@ struct ProvisioningView: View {
         case .pnpm:
             let selectedNode = model.runtimeContext?.node.version ?? "the selected Node context"
             return "Dev Manager will install the recommended pnpm \(ProvisioningRuntimePolicy.recommendedPnpmVersion) inside the selected Node \(selectedNode) context only because pnpm is missing. It will not replace an existing usable pnpm."
+        case .githubCLI:
+            return "Dev Manager will ask for consent, recheck Apple developer tools and Homebrew, then run only `brew install gh`. It will reuse a working existing GitHub CLI without upgrading or repairing it. Node, fnm, pnpm, authentication, and Git configuration are not involved."
         }
     }
 

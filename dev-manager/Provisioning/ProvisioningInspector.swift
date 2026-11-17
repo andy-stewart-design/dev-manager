@@ -11,6 +11,7 @@ nonisolated enum ProvisioningInspector {
             fnmInspectionFailed: fnm.check.state.isAttention
         )
         let fnmCheck = makeFNMCheck(for: fnm)
+        let githubCLI = await ProvisioningGitHubCLIInspector.inspect()
         return ProvisioningInspection(
             developerTools: developerTools.check,
             developerToolsExecutableURL: developerTools.executableURL,
@@ -20,7 +21,9 @@ nonisolated enum ProvisioningInspector {
             chosenFNMDirectoryURL: runtime.chosenFNMDirectoryURL,
             node: runtime.node,
             pnpm: runtime.pnpm,
-            runtimeContext: runtime.context
+            runtimeContext: runtime.context,
+            githubCLI: githubCLI.check,
+            githubCLIContext: githubCLI.context
         )
     }
 
@@ -32,6 +35,15 @@ nonisolated enum ProvisioningInspector {
         case .homebrew:
             let result = await checkHomebrew()
             return ProvisioningTargetedInspection(checks: [result.check], fnmExecutableURL: nil, runtimeContext: nil)
+        case .githubCLI:
+            let result = await ProvisioningGitHubCLIInspector.inspect()
+            return ProvisioningTargetedInspection(
+                checks: [result.check],
+                fnmExecutableURL: nil,
+                runtimeContext: nil,
+                githubCLI: result.check,
+                githubCLIContext: result.context
+            )
         case .fnm, .node, .pnpm:
             // Runtime rows refresh one bounded, coherent context. A failed refresh
             // never leaves the model with the previous context.

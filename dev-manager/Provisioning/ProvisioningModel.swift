@@ -17,6 +17,7 @@ struct ProvisioningModelDependencies {
     let installFNM: @Sendable () async -> ProvisioningProcessResult
     let installNode: @Sendable (URL, URL?) async -> ProvisioningProcessResult
     let installPnpm: @Sendable (ProvisioningRuntimeContext) async -> ProvisioningProcessResult
+    let installGitHubCLI: @Sendable () async -> ProvisioningProcessResult
     let recordInstallation: InstallationRecorder
 
     @MainActor
@@ -29,6 +30,7 @@ struct ProvisioningModelDependencies {
         installFNM: @escaping @Sendable () async -> ProvisioningProcessResult = { await ProvisioningRuntimeInstaller.installFNM() },
         installNode: @escaping @Sendable (URL, URL?) async -> ProvisioningProcessResult = { await ProvisioningRuntimeInstaller.installNode(using: $0, fnmDirectoryURL: $1) },
         installPnpm: @escaping @Sendable (ProvisioningRuntimeContext) async -> ProvisioningProcessResult = { await ProvisioningRuntimeInstaller.installPnpm(using: $0) },
+        installGitHubCLI: @escaping @Sendable () async -> ProvisioningProcessResult = { await ProvisioningGitHubCLIInstaller.install() },
         recordInstallation: @escaping InstallationRecorder = { label, result in
             ProvisioningInstallationLog.append(commandLabel: label, result: result)
         }
@@ -41,6 +43,7 @@ struct ProvisioningModelDependencies {
         self.installFNM = installFNM
         self.installNode = installNode
         self.installPnpm = installPnpm
+        self.installGitHubCLI = installGitHubCLI
         self.recordInstallation = recordInstallation
     }
 
@@ -175,6 +178,10 @@ final class ProvisioningModel: ObservableObject {
         guard case let .tool(_, target, _) = operationState else { return false }
         return [.fnm, .node, .pnpm].contains(target)
     }
+    var isInstallingGitHubCLI: Bool {
+        guard case let .tool(_, target, _) = operationState else { return false }
+        return target == .githubCLI
+    }
     var isConfiguringShell: Bool {
         if case .shell(_, kind: .configuring) = operationState { return true }
         return false
@@ -191,6 +198,7 @@ final class ProvisioningModel: ObservableObject {
     /// Retained independently of runtimeContext so a missing Node can still be
     /// installed into the exact root selected by read-only fnm inspection.
     private(set) var chosenFNMDirectoryURL: URL?
+    private(set) var githubCLIContext: ProvisioningGitHubCLIContext? = nil
 
     @MainActor
     init(dependencies: ProvisioningModelDependencies? = nil) {
@@ -317,6 +325,7 @@ final class ProvisioningModel: ObservableObject {
         case .fnm: return "Installing fnm…"
         case .node: return "Installing Node…"
         case .pnpm: return "Installing pnpm…"
+        case .githubCLI: return "Installing GitHub CLI…"
         }
     }
 
@@ -325,6 +334,7 @@ final class ProvisioningModel: ObservableObject {
         case .developerTools: return state(for: id)?.isMissing == true && !commandLineToolsRequestNeedsCheck
         case .homebrew: return state(for: id)?.isMissing == true && !homebrewHandoffNeedsCheck && developerToolsReady
         case .fnm, .node, .pnpm: return state(for: id)?.isMissing == true
+        case .githubCLI: return state(for: id)?.isMissing == true
         }
     }
 
@@ -343,6 +353,10 @@ final class ProvisioningModel: ObservableObject {
                   state(for: .node)?.isReady == true,
                   runtimeContext?.isManagedByFNM == true else {
                 return "Install and verify Apple developer tools, Homebrew, fnm, and a managed Node first."
+            }
+        case .githubCLI:
+            guard developerToolsReady, state(for: .homebrew)?.isReady == true else {
+                return "Install and verify Apple developer tools and Homebrew first. Node, fnm, and pnpm are not required."
             }
         case .developerTools, .homebrew, .fnm:
             let dependencyOrder: [ProvisioningCheck.ID] = [.developerTools, .homebrew, .fnm]
@@ -368,6 +382,11 @@ final class ProvisioningModel: ObservableObject {
     func canInstallRuntimeTool(_ id: ProvisioningCheck.ID) -> Bool {
         hasCompletedCheck && isSupportedEnvironment && !isBusy &&
             prerequisiteReason(for: id) == nil && isInstallableMissing(id)
+    }
+
+    var canInstallGitHubCLI: Bool {
+        hasCompletedCheck && isSupportedEnvironment && !isBusy &&
+            prerequisiteReason(for: .githubCLI) == nil && isInstallableMissing(.githubCLI)
     }
 
 #if DEBUG
@@ -429,7 +448,8 @@ final class ProvisioningModel: ObservableObject {
         fnmExecutableURL = inspection.fnmExecutableURL
         chosenFNMDirectoryURL = inspection.chosenFNMDirectoryURL
         runtimeContext = inspection.runtimeContext
-        checks = [inspection.developerTools, inspection.homebrew, inspection.fnm, inspection.node, inspection.pnpm]
+        checks = [inspection.developerTools, inspection.homebrew, inspection.fnm, inspection.node, inspection.pnpm, inspection.githubCLI]
+        githubCLIContext = inspection.githubCLIContext
         hasCompletedCheck = true
         if isInitialInspection { hasLoadedInitialInspection = true }
         commandLineToolsRequestNeedsCheck = false
@@ -469,7 +489,9 @@ final class ProvisioningModel: ObservableObject {
     private func apply(_ inspection: ProvisioningTargetedInspection, for target: ProvisioningCheck.ID) {
         let returned = Dictionary(uniqueKeysWithValues: inspection.checks.map { ($0.id, $0) })
         checks = checks.map { returned[$0.id] ?? $0 }
-        if [.fnm, .node, .pnpm].contains(target) {
+        if target == .githubCLI {
+            githubCLIContext = inspection.githubCLIContext
+        } else if [.fnm, .node, .pnpm].contains(target) {
             // A failed runtime context must not leave an old URL/context eligible
             // for writes. The fnm executable itself remains available for a
             // missing Node install, while shell actions require context.
@@ -573,6 +595,8 @@ final class ProvisioningModel: ObservableObject {
             await downloadAndOpenHomebrewPackage()
         case .fnm, .node, .pnpm:
             await installRuntimeTool(id)
+        case .githubCLI:
+            await installGitHubCLI()
         }
     }
 
@@ -622,7 +646,7 @@ final class ProvisioningModel: ObservableObject {
             guard let context = runtimeContext else { return }
             showProgress("Installing pnpm \(Self.pnpmVersion) inside Node \(context.node.version)…")
             result = await dependencies.installPnpm(context)
-        case .developerTools, .homebrew:
+        case .developerTools, .homebrew, .githubCLI:
             return
         }
         guard !Task.isCancelled, ownsTool(id, operationID: operationID) else { return }
@@ -640,6 +664,41 @@ final class ProvisioningModel: ObservableObject {
             var message = "\(id.title) installation failed: \(result.failureDescription(for: label, timeout: ProvisioningConfiguration.installTimeout)). Dependent tools were not started; review the installation log and Check again."
             if let installationLogWarning { message += " \(installationLogWarning)" }
             showError(message)
+        }
+    }
+
+    func installGitHubCLI() async {
+        guard canInstallGitHubCLI else { return }
+        let operationID = UUID()
+        operationState = .tool(token: operationID, target: .githubCLI, phase: .preflight(UUID()))
+        installationFailureLogURL = nil
+        defer { finishToolOperation(.githubCLI, operationID: operationID) }
+
+        guard await inspectTarget(.githubCLI, operationID: operationID, phase: .preflight),
+              ownsTool(.githubCLI, operationID: operationID),
+              let targetState = state(for: .githubCLI) else { return }
+        if targetState.isReady {
+            showProgress("GitHub CLI is already installed; no change was made.")
+            return
+        }
+        guard targetState.isMissing, runtimePrerequisitesReady(for: .githubCLI) else {
+            showError("GitHub CLI needs attention or Apple developer tools and Homebrew are not ready. No change was made.")
+            return
+        }
+
+        operationState = .tool(token: operationID, target: .githubCLI, phase: .installing)
+        showProgress("Installing GitHub CLI through /opt/homebrew/bin/brew…")
+        let result = await dependencies.installGitHubCLI()
+        guard !Task.isCancelled, ownsTool(.githubCLI, operationID: operationID) else { return }
+        recordInstallationResult(result, label: installationLabel(for: .githubCLI))
+        guard await inspectTarget(.githubCLI, operationID: operationID, phase: .reinspecting),
+              ownsTool(.githubCLI, operationID: operationID) else { return }
+        if result.succeeded, state(for: .githubCLI)?.isReady == true {
+            clearMessage()
+        } else if result.succeeded {
+            showError("GitHub CLI did not become usable after installation. No further action was taken.")
+        } else {
+            showError("GitHub CLI installation failed: \(result.failureDescription(for: installationLabel(for: .githubCLI), timeout: ProvisioningConfiguration.installTimeout)). Review the installation log and Check again.")
         }
     }
 
@@ -664,6 +723,7 @@ final class ProvisioningModel: ObservableObject {
         switch id {
         case .fnm, .node, .pnpm: return prerequisiteReason(for: id) == nil
         case .developerTools, .homebrew: return false
+        case .githubCLI: return prerequisiteReason(for: id) == nil
         }
     }
 
@@ -673,6 +733,7 @@ final class ProvisioningModel: ObservableObject {
         case .node: return "fnm install \(Self.nodeVersion)"
         case .pnpm: return "npm install --global pnpm@\(Self.pnpmVersion)"
         case .developerTools, .homebrew: return id.title
+        case .githubCLI: return "brew install gh"
         }
     }
 

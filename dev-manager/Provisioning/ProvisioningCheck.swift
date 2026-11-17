@@ -7,6 +7,7 @@ nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
         case fnm
         case node
         case pnpm
+        case githubCLI
 
         nonisolated var id: String { rawValue }
 
@@ -17,6 +18,7 @@ nonisolated struct ProvisioningCheck: Identifiable, Equatable, Sendable {
             case .fnm: return "Fast Node Manager (fnm)"
             case .node: return "Node"
             case .pnpm: return "pnpm"
+            case .githubCLI: return "GitHub CLI"
             }
         }
     }
@@ -81,6 +83,8 @@ nonisolated struct ProvisioningInspection: Sendable {
     let node: ProvisioningCheck
     let pnpm: ProvisioningCheck
     let runtimeContext: ProvisioningRuntimeContext?
+    let githubCLI: ProvisioningCheck
+    let githubCLIContext: ProvisioningGitHubCLIContext?
 
     nonisolated init(
         developerTools: ProvisioningCheck,
@@ -91,7 +95,9 @@ nonisolated struct ProvisioningInspection: Sendable {
         chosenFNMDirectoryURL: URL?,
         node: ProvisioningCheck,
         pnpm: ProvisioningCheck,
-        runtimeContext: ProvisioningRuntimeContext?
+        runtimeContext: ProvisioningRuntimeContext?,
+        githubCLI: ProvisioningCheck = ProvisioningCheck(id: .githubCLI, state: .checking),
+        githubCLIContext: ProvisioningGitHubCLIContext? = nil
     ) {
         self.developerTools = developerTools
         self.developerToolsExecutableURL = developerToolsExecutableURL
@@ -102,6 +108,8 @@ nonisolated struct ProvisioningInspection: Sendable {
         self.node = node
         self.pnpm = pnpm
         self.runtimeContext = runtimeContext
+        self.githubCLI = githubCLI
+        self.githubCLIContext = githubCLIContext
     }
 }
 
@@ -110,17 +118,23 @@ nonisolated struct ProvisioningTargetedInspection: Sendable {
     let fnmExecutableURL: URL?
     let chosenFNMDirectoryURL: URL?
     let runtimeContext: ProvisioningRuntimeContext?
+    let githubCLI: ProvisioningCheck?
+    let githubCLIContext: ProvisioningGitHubCLIContext?
 
     nonisolated init(
         checks: [ProvisioningCheck],
         fnmExecutableURL: URL?,
         chosenFNMDirectoryURL: URL? = nil,
-        runtimeContext: ProvisioningRuntimeContext?
+        runtimeContext: ProvisioningRuntimeContext?,
+        githubCLI: ProvisioningCheck? = nil,
+        githubCLIContext: ProvisioningGitHubCLIContext? = nil
     ) {
         self.checks = checks
         self.fnmExecutableURL = fnmExecutableURL
         self.chosenFNMDirectoryURL = chosenFNMDirectoryURL
         self.runtimeContext = runtimeContext
+        self.githubCLI = githubCLI
+        self.githubCLIContext = githubCLIContext
     }
 }
 

@@ -14,8 +14,8 @@ Binary availability and host authentication are different states: a working `gh`
 
 ## Scope and non-goals
 
-- In scope: optional Homebrew installation, host-scoped read-only status, device login, Enterprise hosts where supported, and cancellation/privacy boundaries.
-- Out of scope: project readiness gates, password/PAT capture, Git configuration, logout/revocation, account management, custom OAuth, PTYs, and Release exposure.
+- In scope: optional Homebrew installation, host-scoped read-only status, device login, Enterprise hosts where supported, and cancellation/privacy boundaries. The row follows the existing provisioning surface in Debug and Release.
+- Out of scope: project readiness gates, password/PAT capture, Git configuration, logout/revocation, account management, custom OAuth, PTYs, and distribution/rollout work.
 
 ## Related documents
 

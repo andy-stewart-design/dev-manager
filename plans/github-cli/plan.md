@@ -11,12 +11,12 @@ This is an execution contract. Keep step IDs, scope, dependencies, expected file
 
 - Paths are repository-relative. Preserve unrelated work, particularly the user's edits to `dev-manager/Provisioning/Views/ProvisioningStatusView.swift`.
 - Implementation starts only after the user confirms the current provisioning PR is closed and a new branch is ready. Do not create branches, close PRs, commit, push, or start implementation as part of authoring this plan.
-- The user owns Xcode builds/tests, VM transfers, installation approvals, and live authentication. The agent performs source review and `git diff --check`, not builds, tests, parsing, app launches, installation, or authentication unless separately authorized.
+- The user owns VM transfers, installation approvals, and live authentication. For this approved Step 1.1 execution, the agent may compile Debug/Release and run isolated tests with temporary derived data and test-home isolation; it must not launch the app, install tools, or authenticate.
 - Use the existing `dev-manager` scheme and `dev-managerTests` Swift Testing target. The user builds Debug with Product → Build, transfers the zipped Derived Data app through the Tart share, and copies it to the guest's local disk. Do not install Xcode in the clean VM.
-- Preserve DEBUG-only visibility, existing platform scope, per-row progress, layout settings, tool pins, shell configuration, and the normal project runner. Keep UI state MainActor-isolated and background value/process helpers appropriately nonisolated and Sendable.
+- Preserve the established provisioning visibility in Debug and Release, existing platform scope, per-row progress, layout settings, tool pins, shell configuration, and the normal project runner. Keep UI state MainActor-isolated and background value/process helpers appropriately nonisolated and Sendable.
 - Installation requires the existing Apple/Homebrew prerequisites, not Node. Authentication is optional and never enters local-project or fixture readiness calculations.
 - Authentication must not use the installation logger, request token-bearing status output, collect passwords/PATs, bypass TLS, or directly edit credential files. CLI-owned login persistence is allowed only in Phase 3 after consent. Never run logout, revoke credentials, configure Git helpers, or automatically upgrade/repair `gh`.
-- No current green baseline is established. Existing build, runner-test, and provisioning evidence is not verification of this feature. The current shared scheme's Archive configuration is Debug; do not mistake that for Release verification or add distribution/signing work.
+- No current green baseline is established. Existing build, runner-test, and provisioning evidence is not verification of this feature. Existing provisioning is available in Release alongside Debug; do not add distribution/signing work or claim the manual VM gate from compilation alone.
 - Every completed step needs concise evidence at its named location. Do not create empty evidence notes while planning. Record checks, outcomes, material caveats, and actual approval—not transcripts, device codes, tokens, or chronological diaries.
 - Check a verification task only after its checks and completion gate pass. Failed, blocked, skipped, or waived checks remain unchecked; record the reason, approval owner, and next action. A waiver is not a pass.
 
@@ -34,7 +34,7 @@ Read-only baseline inspection belongs to Step 1.1; no separate Phase 0 is needed
 
 ## Phase 1 — Optional CLI installation
 
-Outcome: a separate top-level GitHub CLI row can detect and install `gh` without implying authentication.
+Outcome: a separate top-level GitHub CLI row can detect and install `gh` without implying authentication, alongside the existing Debug/Release provisioning surface.
 Depends on: the user-confirmed branch precondition above.
 Review boundary: binary inspection, consent, installation, and row integration only; no login/status placeholder.
 
@@ -52,15 +52,15 @@ Expected files:
 
 Tasks:
 
-- [ ] Inspect the actual starting checkout and record relevant existing failures; add `gh` binary/version detection and targeted inspection, reusing a working existing executable without upgrade or repair.
-- [ ] Add the explicit Apple developer tools → Homebrew → GitHub CLI branch. Do not append `gh` to the fnm/Node/pnpm dependency chain or include it in runtime/fixture readiness.
-- [ ] Add consented installation with preflight reinspection, per-row busy/progress, post-install verification, and installation-only logging. Preserve existing statuses, layout, and local project behavior.
+- [x] Inspect the actual starting checkout and record relevant existing failures; add `gh` binary/version detection and targeted inspection, reusing a working existing executable without upgrade or repair.
+- [x] Add the explicit Apple developer tools → Homebrew → GitHub CLI branch. Do not append `gh` to the fnm/Node/pnpm dependency chain or include it in runtime/fixture readiness.
+- [x] Add consented installation with preflight reinspection, per-row busy/progress, post-install verification, and installation-only logging. Preserve existing statuses, layout, and local project behavior.
 - [ ] Satisfy the verification/completion gate below with the user and record concise evidence.
 
 Verification:
 
-- Source: inspect every new check-ID/inspection consumer, DEBUG guard, prerequisite and readiness calculation; `git diff --check` passes. No auth command or dead login button is introduced.
-- Manual: user builds Debug and uses the VM with Apple/Homebrew ready but Node unavailable. Install missing `gh`, recheck, reopen, and repeat: only `gh` installs and an existing working version is retained. Decline consent and exercise a safe failed-install/retry case; neither reports success. A prepared local project remains runnable without `gh`.
+- Source: inspect every new check-ID/inspection consumer, Release/Debug visibility, prerequisite and readiness calculation; `git diff --check` passes. No auth command or dead login button is introduced.
+- Automated/source: compile Debug and Release and run the isolated focused/full suite without real `gh`, Homebrew, Node, or authentication commands. Manual: user uses the VM with Apple/Homebrew ready but Node unavailable. Install missing `gh`, recheck, reopen, and repeat: only `gh` installs and an existing working version is retained. Decline consent and exercise a safe failed-install/retry case; neither reports success. A prepared local project remains runnable without `gh`.
 
 Completion gate: user-built detection/install/reuse and meaningful failure/readiness outcomes are demonstrated; source checks alone do not prove Homebrew compatibility.
 Evidence location: [evidence/step-1.1.md](evidence/step-1.1.md).
@@ -139,7 +139,7 @@ Verification:
 - Source: no auth data goes to installation logs, console logging, credential fields, or raw UI diagnostics. Only the designated modal displays the one-time code. No pasteboard reads, password/PAT input, TLS bypass, credential deletion, or unrelated-host mutation exists.
 - Focused tests: user runs `GitHubLoginTests` during this step. Fixtures cover errors/races/storage warnings without weakening Keychain or requiring real Enterprise credentials. Synthetic subprocess tests isolate temporary data and clean up their owned children.
 - Live: user builds/transfers Debug, completes GitHub.com browser login, uses Copy/manual browser reopen, cancels and retries, checks expiry/reopen and a near-completion cancel, and verifies account plus hostname. A previously authenticated second host remains unchanged. Inspect logs for absence of auth data. Invalid TLS/unsupported Enterprise flow remains an explicit error, never a fallback to GitHub.com.
-- Final integration: user runs Product → Test (Cmd-U) for existing and new tests once, checks a normal local project's Start/Open/Stop, and verifies Release has no provisioning/login UI. For Release verification, temporarily select Release in the scheme's Run build configuration, then restore Debug; no Archive or distribution change is required.
+- Final integration: user runs Product → Test (Cmd-U) for existing and new tests once, checks a normal local project's Start/Open/Stop, and verifies Release retains the existing provisioning surface with the optional GitHub CLI row and no distribution changes. For Release verification, temporarily select Release in the scheme's Run build configuration, then restore Debug; no Archive or distribution change is required.
 
 Completion gate: focused and final integration tests, GitHub.com live recovery/privacy, and unchanged local/Release behavior are verified. Real Enterprise status/device-flow cases require a real server/account/SSO path. If unavailable, their acceptance and this final verification gate remain blocked and unchecked; recording that limitation is not a pass or an invented waiver.
 Evidence location: [evidence/step-3.1.md](evidence/step-3.1.md).
@@ -158,7 +158,7 @@ Phase exit gate: after Step 3.1 verification, review composition and every final
 | AC6 | 2.1 JSON; 3.1 device flow | Actual status confirms success; unknown/failed output is bounded and safe. | [2.1](evidence/step-2.1.md), [3.1](evidence/step-3.1.md) |
 | AC7 | 3.1 | Cancel/expiry/dismissal clean up; late results ignored; saved auth retained. | [3.1](evidence/step-3.1.md) |
 | AC8 | 2.1 environment; 3.1 multi-host/privacy | No token exposure, auth logging, or mutation of other-host accounts. | [2.1](evidence/step-2.1.md), [3.1](evidence/step-3.1.md) |
-| AC9 | 1.1 source; 3.1 final integration | Normal project behavior and DEBUG/Release isolation preserved. | [1.1](evidence/step-1.1.md), [3.1](evidence/step-3.1.md) |
+| AC9 | 1.1 source; 3.1 final integration | Normal project behavior and established Debug/Release provisioning visibility preserved. | [1.1](evidence/step-1.1.md), [3.1](evidence/step-3.1.md) |
 | AC10 | All steps; 3.1 final | Reopen/retry reuse installation and real host status without credential loss. | [1.1](evidence/step-1.1.md), [2.1](evidence/step-2.1.md), [3.1](evidence/step-3.1.md) |
 | AC11 | 3.1 fixtures | Reported plaintext persistence warns without logout/revocation or transcript storage. | [3.1](evidence/step-3.1.md) |
 
@@ -170,7 +170,7 @@ Revert steps in reverse order with their consumers/types together. Code rollback
 
 ## Planned deferred checks
 
-- Git credential setup, logout/revocation, account switching, broad account management, persistent host selection, ports/arbitrary providers, PTYs, Bun, and production Release exposure remain outside scope.
+- Git credential setup, logout/revocation, account switching, broad account management, persistent host selection, ports/arbitrary providers, PTYs, Bun, and distribution/rollout exposure remain outside scope.
 - Future CLI versions require capability/output validation; no blanket compatibility claim is made. Enterprise acceptance is not deferred by default: missing human/server access is an execution-time blocker, not successful verification.
 
 This plan authors no implementation, evidence results, build, test, installation, authentication, branch, or PR action. Execution-time discoveries and approved deviations belong in the predetermined evidence notes, not mutable plan status.
