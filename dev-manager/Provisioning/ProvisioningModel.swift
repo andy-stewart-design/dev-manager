@@ -9,6 +9,7 @@ struct ProvisioningModelDependencies {
     typealias HomebrewDownloader = @Sendable (@escaping @Sendable @MainActor () -> Void) async throws -> URL
     typealias InstallationRecorder = @Sendable (String, ProvisioningProcessResult) -> ProvisioningInstallationLog.AppendResult
 
+    let inspectGitHubAuth: @Sendable (ProvisioningGitHubCLIContext, String) async -> GitHubAuthStatus
     let inspect: @Sendable () async -> ProvisioningInspection
     let inspectTarget: @Sendable (ProvisioningCheck.ID) async -> ProvisioningTargetedInspection
     let requestCommandLineTools: CommandLineToolsRequester
@@ -22,6 +23,7 @@ struct ProvisioningModelDependencies {
 
     @MainActor
     init(
+        inspectGitHubAuth: (@Sendable (ProvisioningGitHubCLIContext, String) async -> GitHubAuthStatus)? = nil,
         inspect: @escaping @Sendable () async -> ProvisioningInspection = { await ProvisioningInspector.inspect() },
         inspectTarget: @escaping @Sendable (ProvisioningCheck.ID) async -> ProvisioningTargetedInspection = { await ProvisioningInspector.inspect(target: $0) },
         requestCommandLineTools: CommandLineToolsRequester? = nil,
@@ -35,6 +37,9 @@ struct ProvisioningModelDependencies {
             ProvisioningInstallationLog.append(commandLabel: label, result: result)
         }
     ) {
+        self.inspectGitHubAuth = inspectGitHubAuth ?? { _, host in
+            GitHubAuthStatus(host: host, outcome: .unverified(reason: .unknownState), environmentCredential: nil)
+        }
         self.inspect = inspect
         self.inspectTarget = inspectTarget
         self.requestCommandLineTools = requestCommandLineTools ?? Self.defaultCommandLineToolsRequester
@@ -89,6 +94,12 @@ final class ProvisioningModel: ObservableObject {
     }
 
     let dependencies: ProvisioningModelDependencies
+    @Published private(set) var gitHubAuthStatus: GitHubAuthStatus?
+    @Published private(set) var isCheckingGitHubAuth = false
+    private var gitHubAuthTask: Task<Void, Never>?
+    private var gitHubAuthGeneration = UUID()
+    private let gitHubAuthHost = "github.com"
+
     @Published private(set) var operationState: OperationState?
     @Published private(set) var checks: [ProvisioningCheck] = []
     @Published private(set) var installationLogURL: URL? = ProvisioningInstallationLog.existingLogURL()
@@ -202,7 +213,9 @@ final class ProvisioningModel: ObservableObject {
 
     @MainActor
     init(dependencies: ProvisioningModelDependencies? = nil) {
-        self.dependencies = dependencies ?? ProvisioningModelDependencies()
+        self.dependencies = dependencies ?? ProvisioningModelDependencies(inspectGitHubAuth: { context, host in
+            await GitHubAuthService.status(using: context, hostname: host)
+        })
     }
 
     var supportedEnvironmentIssue: String? { Self.environmentIssue }
@@ -450,6 +463,7 @@ final class ProvisioningModel: ObservableObject {
         runtimeContext = inspection.runtimeContext
         checks = [inspection.developerTools, inspection.homebrew, inspection.fnm, inspection.node, inspection.pnpm, inspection.githubCLI]
         githubCLIContext = inspection.githubCLIContext
+        refreshGitHubAuthStatus()
         hasCompletedCheck = true
         if isInitialInspection { hasLoadedInitialInspection = true }
         commandLineToolsRequestNeedsCheck = false
@@ -481,6 +495,31 @@ final class ProvisioningModel: ObservableObject {
         clearMessage()
     }
 
+    /// Account inspection is independent of local readiness and installer ownership.
+    func refreshGitHubAuthStatus() {
+        gitHubAuthTask?.cancel()
+        let generation = UUID()
+        gitHubAuthGeneration = generation
+        guard let context = githubCLIContext, state(for: .githubCLI)?.isReady == true else {
+            gitHubAuthStatus = nil
+            isCheckingGitHubAuth = false
+            return
+        }
+        let host = gitHubAuthHost
+        let inspect = dependencies.inspectGitHubAuth
+        gitHubAuthStatus = GitHubAuthStatus(host: host, outcome: .checking, environmentCredential: nil)
+        isCheckingGitHubAuth = true
+        gitHubAuthTask = Task { [weak self] in
+            let status = await inspect(context, host)
+            guard !Task.isCancelled, let self,
+                  self.gitHubAuthGeneration == generation,
+                  self.githubCLIContext == context, status.host == host else { return }
+            self.gitHubAuthStatus = status
+            self.isCheckingGitHubAuth = false
+            self.gitHubAuthTask = nil
+        }
+    }
+
     private func refreshShellInspection() {
         shellInspection = ProvisioningShellConfiguration.inspect()
         shellConfigurationStatus = shellInspection.message
@@ -491,6 +530,7 @@ final class ProvisioningModel: ObservableObject {
         checks = checks.map { returned[$0.id] ?? $0 }
         if target == .githubCLI {
             githubCLIContext = inspection.githubCLIContext
+            refreshGitHubAuthStatus()
         } else if [.fnm, .node, .pnpm].contains(target) {
             // A failed runtime context must not leave an old URL/context eligible
             // for writes. The fnm executable itself remains available for a

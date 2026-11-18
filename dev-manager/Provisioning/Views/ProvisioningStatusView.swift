@@ -1,10 +1,53 @@
 import SwiftUI
 
+enum GitHubGroupPresentation: Equatable {
+    case ready, checking, setup, unverified, attention
+
+    static func derive(cli: ProvisioningCheck.State, hasContext: Bool, auth: GitHubAuthStatus?) -> Self {
+        if case .attention = cli { return .attention }
+        if case .checking = cli { return .checking }
+        guard cli.isReady, hasContext else { return .setup }
+        guard let auth, auth.host == "github.com" else { return .setup }
+        switch auth.outcome {
+        case .authenticated: return .ready
+        case .checking: return .checking
+        case .notSignedIn: return .setup
+        case .unverified: return .unverified
+        case .invalidCredentials, .unavailable, .unsupported: return .attention
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .ready: return "checkmark.circle.fill"
+        case .checking: return "ellipsis.circle"
+        case .setup: return "circle.dashed"
+        case .unverified: return "questionmark.circle"
+        case .attention: return "exclamationmark.triangle.fill"
+        }
+    }
+    var color: Color {
+        switch self {
+        case .ready: return .green
+        case .attention: return .orange
+        default: return .secondary
+        }
+    }
+    var label: String {
+        switch self {
+        case .ready: return "GitHub ready"
+        case .checking: return "Checking GitHub"
+        case .setup, .unverified: return "GitHub needs setup"
+        case .attention: return "GitHub needs attention"
+        }
+    }
+}
+
 struct ProvisioningStatusView: View {
     private enum Layout {
         static let rowMinimumHeight: CGFloat = 32
         static let rowVerticalPadding: CGFloat = 10
-        static let groupHeadingBottomPadding: CGFloat = 2
+        static let groupHeadingBottomPadding: CGFloat = 0
         static let actionColumnMinimumWidth: CGFloat = 116
         static let nodeIndent: CGFloat = 26
         static let statusIconWidth: CGFloat = 18
@@ -37,7 +80,7 @@ struct ProvisioningStatusView: View {
                 fullWidthDivider
                 statusRow(for: .homebrew)
                 fullWidthDivider
-                statusRow(for: .githubCLI)
+                gitHubEnvironment
                 fullWidthDivider
                 nodeEnvironment
 
@@ -48,6 +91,91 @@ struct ProvisioningStatusView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var gitHubEnvironment: some View {
+        let presentation = GitHubGroupPresentation.derive(
+            cli: checkState(for: .githubCLI), hasContext: model.githubCLIContext != nil,
+            auth: model.gitHubAuthStatus
+        )
+        return VStack(alignment: .leading, spacing: 0) {
+            rowLayout(
+                leadingStatus: {
+                    Image(systemName: presentation.icon)
+                        .foregroundStyle(presentation.color)
+                        .accessibilityLabel(presentation.label)
+                },
+                titleInfo: {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("GitHub").fontWeight(.medium)
+                    }
+                },
+                details: { EmptyView() },
+                trailingAction: { EmptyView() },
+                bottomPadding: Layout.groupHeadingBottomPadding
+            )
+            statusRow(for: .githubCLI, indented: true)
+            nodeChildDivider
+            gitHubAuthenticationRow
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var gitHubAuthenticationRow: some View {
+        let available = checkState(for: .githubCLI).isReady && model.githubCLIContext != nil
+        let status = available ? model.gitHubAuthStatus : nil
+        let presentation = authPresentation(status, available: available)
+        let host = status.flatMap { $0.host.isEmpty ? nil : $0.host } ?? "github.com"
+        return rowLayout(
+            leadingStatus: {
+                Image(systemName: presentation.icon)
+                    .foregroundStyle(presentation.color)
+                    .accessibilityLabel(presentation.label)
+            },
+            titleInfo: {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("Authentication").fontWeight(.medium)
+                    Text("\(host)")
+                        .font(.callout)
+                        .fontWeight(.regular)
+                        .foregroundStyle(.secondary)
+                    ProvisioningInfoButton(title: "Authentication", detail: authDetail(status, host: host, available: available))
+                }
+            },
+            details: {
+                if let status, let attention = authAttention(status) {
+                    Text(attention)
+                        .font(.callout)
+                        .foregroundStyle(Color.orange)
+                        .textSelection(.enabled)
+                }
+            },
+            trailingAction: {
+                if available && model.isCheckingGitHubAuth {
+                    ProgressView().controlSize(.small)
+                        .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
+                        .accessibilityLabel("Checking authentication status")
+                } else {
+                    Button("Check status") { model.refreshGitHubAuthStatus() }
+                        .buttonStyle(.bordered)
+                        .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
+                        .disabled(!available || model.isInstallingGitHubCLI)
+                }
+            },
+            leadingInset: Layout.nodeIndent
+        )
+    }
+
+    private func authPresentation(_ status: GitHubAuthStatus?, available: Bool) -> (icon: String, color: Color, label: String) {
+        guard available, let status else { return ("circle.dashed", .secondary, "Authentication not checked") }
+        switch status.outcome {
+        case .authenticated: return ("checkmark.circle.fill", .green, "Authenticated")
+        case .notSignedIn: return ("circle.dashed", .secondary, "Not signed in")
+        case .checking: return ("ellipsis.circle", .secondary, "Checking")
+        case .invalidCredentials: return ("exclamationmark.triangle.fill", .orange, "Needs attention")
+        case .unavailable, .unsupported: return ("exclamationmark.triangle.fill", .orange, "Authentication needs attention")
+        case .unverified: return ("questionmark.circle", .secondary, "Authentication unverified")
+        }
     }
 
     private var nodeEnvironment: some View {
@@ -206,6 +334,52 @@ struct ProvisioningStatusView: View {
             leadingInset: indented ? Layout.nodeIndent : 0,
             bottomPadding: bottomPadding
         )
+    }
+
+    private func authAttention(_ status: GitHubAuthStatus) -> String? {
+        switch status.outcome {
+        case .invalidCredentials: return "Credentials could not be verified."
+        case .unsupported(let reason):
+            switch reason {
+            case .invalidHost: return "The authentication host is invalid."
+            case .cliVersion: return "A supported GitHub CLI version is required."
+            case .capability: return "GitHub CLI does not support this authentication check."
+            }
+        case .unavailable(let reason):
+            switch reason {
+            case .timeout: return "The authentication check timed out."
+            case .network: return "The authentication check encountered a network issue."
+            case .tls: return "The authentication check encountered a TLS issue."
+            }
+        default: return nil
+        }
+    }
+
+    private func authDetail(_ status: GitHubAuthStatus?, host: String, available: Bool) -> String {
+        guard available else { return "Host: \(host)\nInstall GitHub CLI to check authentication." }
+        guard let status else { return "Host: \(host)\nAuthentication status has not been checked." }
+        let description: String
+        switch status.outcome {
+        case .checking: description = "Checking authentication status."
+        case .notSignedIn: description = "Not signed in."
+        case let .authenticated(login, source):
+            let sourceName: String
+            switch source {
+            case .environment(let credential): sourceName = "App environment (\(credential.rawValue))"
+            case .stored: sourceName = "Stored credential"
+            case .keychain: sourceName = "Keychain"
+            case .unknown: sourceName = "Unknown"
+            }
+            description = "Signed in as \(login).\nCredential source: \(sourceName)."
+        case .invalidCredentials, .unsupported, .unavailable:
+            description = authAttention(status) ?? "Authentication status unavailable."
+        case .unverified: description = "Authentication status is unverified."
+        }
+        var detail = "Host: \(host)\nStatus: \(description)"
+        if let credential = status.environmentCredential {
+            detail += "\nEnvironment credential present: \(credential.rawValue)."
+        }
+        return detail
     }
 
     @ViewBuilder

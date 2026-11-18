@@ -88,10 +88,10 @@ Expected files:
 
 Tasks:
 
-- [ ] Add `status(hostname:)` using `gh auth status --hostname HOST --json hosts` with the existing short inspection timeout. Interpret the matching active entry, actual state, login, and safe token-source label; never request `--show-token` or infer authentication from exit zero alone.
-- [ ] Distinguish no stored authentication, invalid/expired authentication, unavailable network/TLS, timeout, malformed output, and unsupported CLI. Report host-appropriate environment credential presence/source without displaying values or clearing/bypassing that environment to force stored login.
-- [ ] Present default-host status separately after binary inspection, without making optional network status part of local-tool readiness. Keep the service host-aware; do not add a temporary host selector before the real modal.
-- [ ] Add focused fixtures for matching/other hosts, active/inactive entries, empty hosts, expiry, environment source, zero-exit errors, malformed JSON, and network/TLS/timeout results. Assert the requested hostname is passed as an argument, not shell interpolation.
+- [x] Add `status(hostname:)` using `gh auth status --hostname HOST --json hosts` with the existing short inspection timeout and version-aware flags: `--no-refresh` is mandatory from 2.103 onward; legacy 2.81–2.102 uses the JSON form without it (see [compatibility evidence](evidence/changes.md)). Interpret the matching active entry, actual state, login, and safe token-source label; never request `--show-token` or infer authentication from exit zero alone.
+- [x] Distinguish no stored authentication, invalid/expired authentication, unavailable network/TLS, timeout, malformed output, and unsupported CLI. Report host-appropriate environment credential presence/source without displaying values or clearing/bypassing that environment to force stored login.
+- [x] Present default-host status separately after binary inspection, without making optional network status part of local-tool readiness. Keep the service host-aware; do not add a temporary host selector before the real modal.
+- [x] Add focused fixtures for matching/other hosts, active/inactive entries, empty hosts, expiry, environment source, zero-exit errors, malformed JSON, and network/TLS/timeout results. Assert the requested hostname is passed as an argument, not shell interpolation.
 - [ ] Satisfy the verification/completion gate below with the user and record concise evidence.
 
 Verification:
