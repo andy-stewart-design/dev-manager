@@ -117,6 +117,7 @@ final class ProvisioningModel: ObservableObject {
         case blocked(String), success(login: String, cancelled: Bool, plaintext: Bool), error(String), cancelling, cancelled
     }
     @Published private(set) var loginState: LoginState = .entry(error: false)
+    @Published private(set) var loginCodeCopied = false
     @Published private(set) var plaintextWarningHosts: Set<String> = []
     private var loginTask: Task<Void, Never>?
     private var loginCode: String?
@@ -569,6 +570,7 @@ final class ProvisioningModel: ObservableObject {
     func dismissLogin() {
         isShowingLogin = false
         loginState = .cancelled
+        loginCodeCopied = false
         loginCode = nil
         loginURL = nil
         loginTask?.cancel()
@@ -587,7 +589,7 @@ final class ProvisioningModel: ObservableObject {
         gitHubAuthGeneration = UUID()
         isCheckingGitHubAuth = false
         gitHubAuthStatus = nil
-        loginCode = nil; loginURL = nil; loginOpenedBrowser = false; loginWarned = false
+        loginCode = nil; loginURL = nil; loginCodeCopied = false; loginOpenedBrowser = false; loginWarned = false
         let token = UUID()
         operationState = .githubLogin(token: token)
         loginState = .preflight
@@ -600,7 +602,7 @@ final class ProvisioningModel: ObservableObject {
                 if self.operationState == .githubLogin(token: token) {
                     self.operationState = nil
                     self.loginTask = nil
-                    self.loginCode = nil; self.loginURL = nil
+                    self.loginCode = nil; self.loginURL = nil; self.loginCodeCopied = false
                 }
             }
             guard self.ownsLogin(token, context: context, host: host) else { return }
@@ -626,6 +628,7 @@ final class ProvisioningModel: ObservableObject {
                 Task { @MainActor [weak self] in self?.receiveLoginEvent(event, token: token, context: context, host: host) }
             }
             guard self.ownsLogin(token, context: context, host: host) else { return }
+            self.loginCodeCopied = false
             if self.isShowingLogin { self.loginState = .verifying }
             // A detached read-only inspection must run even when the login task was cancelled.
             let post = await Task.detached { await inspect(context, host.value) }.value
@@ -663,6 +666,7 @@ final class ProvisioningModel: ObservableObject {
               case .waiting = loginState else { return }
         switch event {
         case let .deviceCode(code): loginCode = code
+        case .clipboardCopied: loginCodeCopied = true
         case let .verificationURL(url):
             guard host.validatesDeviceURL(url) else { return }
             loginURL = url

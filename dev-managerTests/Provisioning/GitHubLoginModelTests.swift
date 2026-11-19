@@ -175,14 +175,18 @@ struct GitHubLoginModelTests {
         await loginState(model) { $0 == .waiting(code: "TEST-1234", url: url) }
         #expect(spies.urls == [url] && spies.codes.isEmpty)
         #expect(spies.events == ["open"])
+        #expect(!model.loginCodeCopied)
+        await store.emit(.clipboardCopied)
+        for _ in 0..<100 where !model.loginCodeCopied { await Task.yield() }
+        #expect(model.loginCodeCopied)
         await store.emit(.verificationURL(url)); await store.emit(.deviceCode("TEST-1234"))
         model.openLoginBrowser(); model.copyLoginDeviceCode()
         model.dismissLogin()
         model.openLoginBrowser(); model.copyLoginDeviceCode()
-        await store.emit(.deviceCode("OLD-0000")); await store.emit(.verificationURL(url))
+        await store.emit(.deviceCode("OLD-0000")); await store.emit(.verificationURL(url)); await store.emit(.clipboardCopied)
         await gate.resolve(.init(completion: .cancelled, warnedAboutPlaintextStorage: false))
         await operationIdle(model)
-        #expect(model.loginState == .cancelled && !model.isShowingLogin)
+        #expect(model.loginState == .cancelled && !model.isShowingLogin && !model.loginCodeCopied)
         #expect(spies.urls == [url, url] && spies.codes == ["TEST-1234"])
     }
 

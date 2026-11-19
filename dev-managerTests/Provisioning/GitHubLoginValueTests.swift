@@ -53,7 +53,7 @@ struct GitHubLoginValueTests {
 
     @Test func clipboardOutput() throws {
         var parser = GitHubDeviceFlowParser(hostname: try GitHubHostname("github.com"))
-        #expect(try parser.consume(Data("! One-time code (ABC1-2345) copied to clipboard\n".utf8), stream: .stderr) == [.deviceCode("ABC1-2345")])
+        #expect(try parser.consume(Data("! One-time code (ABC1-2345) copied to clipboard\n".utf8), stream: .stderr) == [.deviceCode("ABC1-2345"), .clipboardCopied])
         for bad in ["! One-time code (ABC1-2345) copied to clipboard extra", "! One-time code (ABC1-2345 copied to clipboard", "! One-time code (ABC1--2345) copied to clipboard"] {
             var invalid = GitHubDeviceFlowParser(hostname: try GitHubHostname("github.com"))
             #expect(throws: GitHubLoginFailure.unsupportedOutput) { try invalid.consume(Data((bad + "\n").utf8), stream: .stderr) }

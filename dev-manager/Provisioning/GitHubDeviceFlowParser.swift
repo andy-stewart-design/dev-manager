@@ -2,7 +2,7 @@ import Foundation
 
 nonisolated enum GitHubDeviceFlowStream: Sendable { case stdout, stderr }
 nonisolated enum GitHubDeviceFlowEvent: Equatable, Sendable {
-    case deviceCode(String), verificationURL(URL), plaintextStorageWarning, authenticationComplete
+    case deviceCode(String), clipboardCopied, verificationURL(URL), plaintextStorageWarning, authenticationComplete
 }
 nonisolated enum GitHubLoginFailure: Error, Equatable, Sendable, LocalizedError {
     case unsupportedCLI, unsupportedOutput, invalidVerificationURL, expired, processFailed
@@ -102,21 +102,23 @@ nonisolated struct GitHubDeviceFlowParser {
         let codePrefix = "First copy your one-time code: "
         let copiedPrefix = "One-time code ("
         var candidate: String?
+        var copied = false
         if clean.hasPrefix(codePrefix) {
             candidate = String(clean.dropFirst(codePrefix.count))
         } else if clean.hasPrefix(copiedPrefix) {
             let suffix = ") copied to clipboard"
             guard clean.hasSuffix(suffix), clean.count >= copiedPrefix.count + suffix.count else { throw GitHubLoginFailure.unsupportedOutput }
             candidate = String(clean.dropFirst(copiedPrefix.count).dropLast(suffix.count))
+            copied = true
         }
         if let candidate {
             let bytes = Array(candidate.utf8)
             guard (4...32).contains(bytes.count), bytes.first != 45, bytes.last != 45,
                   bytes.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 }),
                   !candidate.contains("--") else { throw GitHubLoginFailure.unsupportedOutput }
-            if let code { guard code == candidate else { throw GitHubLoginFailure.unsupportedOutput }; return [] }
+            if let code { guard code == candidate else { throw GitHubLoginFailure.unsupportedOutput }; return copied ? [.clipboardCopied] : [] }
             code = candidate
-            return [.deviceCode(candidate)]
+            return copied ? [.deviceCode(candidate), .clipboardCopied] : [.deviceCode(candidate)]
         }
         let urlPrefix = "Open this URL to continue in your web browser: "
         if clean.hasPrefix(urlPrefix) {

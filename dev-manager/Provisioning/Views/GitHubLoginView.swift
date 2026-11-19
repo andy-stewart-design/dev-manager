@@ -24,14 +24,33 @@ struct GitHubLoginView: View {
                 ProgressView("Checking existing credentials for \(model.selectedAuthHost)…")
                 cancelButton
             case let .waiting(code, url):
-                Text("Complete sign-in for \(model.selectedAuthHost) in your browser.")
+                Text("Paste this code in your browser to finish signing in to \(model.selectedAuthHost).")
                 if let code {
-                    Text(code).font(.title.monospaced()).textSelection(.enabled)
-                    Button("Copy code") { model.copyLoginDeviceCode() }
-                    Text("GitHub CLI tries to copy this code automatically. Use Copy code if needed.").font(.caption)
+                    HStack {
+                        Text(code).font(.title.monospaced()).textSelection(.enabled)
+                        Spacer()
+                        Button("Copy code") { model.copyLoginDeviceCode() }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                 } else { ProgressView("Waiting for device code…") }
-                if url != nil { Button("Open browser") { model.openLoginBrowser() } }
-                cancelButton
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(model.loginCodeCopied ? "Code copied to clipboard. Waiting for sign-in…" : "Waiting for sign-in…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Divider()
+                HStack {
+                    Button("Cancel") { model.dismissLogin() }.keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button("Open browser") { model.openLoginBrowser() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(url == nil)
+                }
             case .verifying:
                 ProgressView("Verifying credentials for \(model.selectedAuthHost)…")
                 cancelButton
