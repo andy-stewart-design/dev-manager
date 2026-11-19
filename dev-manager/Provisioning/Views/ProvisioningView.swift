@@ -67,6 +67,10 @@ struct ProvisioningView: View {
                 await model.checkAgain()
             }
         }
+        .onDisappear { model.dismissLogin() }
+        .sheet(isPresented: $model.isShowingLogin, onDismiss: { model.dismissLogin() }) {
+            GitHubLoginView(model: model)
+        }
         .sheet(isPresented: $isShowingAdvancedSheet, onDismiss: handleAdvancedSheetDismissal) {
 #if DEBUG
             AdvancedProvisioningSheet(

@@ -11,3 +11,5 @@ Implementation and automated verification only; the user-owned manual check and 
 - Focused model fixtures cover pending-query independence, clearing a missing binary, late completion after clearing and supersession, and non-success outcomes retaining runtime readiness. A distinct changed-binary-context race resolves the newer query before the older one; explicit installation dependency and log recorder counters remain zero for signed-out, outage, and authenticated results. Unexpected top-level JSON fields fail closed as malformed, including error, errors, and message fixtures; valid empty hosts remains signed out.
 
 Manual next: user checks GitHub.com signed-out and already-signed-in disposable contexts, reopen/read-only behavior, and privacy as specified in the plan. Do not revoke or sign out a real account to construct a test. Live Enterprise remains unverified and is a Phase 3 acceptance case, not a pass.
+
+The user approved proceeding to Step 3.1; this is not a report that each pending Phase 2 manual scenario passed, nor a waiver of those checks.

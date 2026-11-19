@@ -3,11 +3,11 @@ import SwiftUI
 enum GitHubGroupPresentation: Equatable {
     case ready, checking, setup, unverified, attention
 
-    static func derive(cli: ProvisioningCheck.State, hasContext: Bool, auth: GitHubAuthStatus?) -> Self {
+    static func derive(cli: ProvisioningCheck.State, hasContext: Bool, auth: GitHubAuthStatus?, host: String = "github.com") -> Self {
         if case .attention = cli { return .attention }
         if case .checking = cli { return .checking }
         guard cli.isReady, hasContext else { return .setup }
-        guard let auth, auth.host == "github.com" else { return .setup }
+        guard let auth, auth.host == host else { return .setup }
         switch auth.outcome {
         case .authenticated: return .ready
         case .checking: return .checking
@@ -96,7 +96,7 @@ struct ProvisioningStatusView: View {
     private var gitHubEnvironment: some View {
         let presentation = GitHubGroupPresentation.derive(
             cli: checkState(for: .githubCLI), hasContext: model.githubCLIContext != nil,
-            auth: model.gitHubAuthStatus
+            auth: model.gitHubAuthStatus, host: model.selectedAuthHost
         )
         return VStack(alignment: .leading, spacing: 0) {
             rowLayout(
@@ -125,7 +125,7 @@ struct ProvisioningStatusView: View {
         let available = checkState(for: .githubCLI).isReady && model.githubCLIContext != nil
         let status = available ? model.gitHubAuthStatus : nil
         let presentation = authPresentation(status, available: available)
-        let host = status.flatMap { $0.host.isEmpty ? nil : $0.host } ?? "github.com"
+        let host = model.selectedAuthHost
         return rowLayout(
             leadingStatus: {
                 Image(systemName: presentation.icon)
@@ -139,7 +139,7 @@ struct ProvisioningStatusView: View {
                         .font(.callout)
                         .fontWeight(.regular)
                         .foregroundStyle(.secondary)
-                    ProvisioningInfoButton(title: "Authentication", detail: authDetail(status, host: host, available: available))
+                    ProvisioningInfoButton(title: "Authentication", detail: authDetail(status, host: host, available: available) + (model.plaintextWarningHosts.contains(host) ? " The CLI reported plaintext credential storage for this host." : ""))
                 }
             },
             details: {
@@ -151,16 +151,16 @@ struct ProvisioningStatusView: View {
                 }
             },
             trailingAction: {
-                if available && model.isCheckingGitHubAuth {
-                    ProgressView().controlSize(.small)
-                        .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
-                        .accessibilityLabel("Checking authentication status")
-                } else {
-                    Button("Check status") { model.refreshGitHubAuthStatus() }
+                HStack {
+                    if model.isCheckingGitHubAuth { ProgressView().controlSize(.small) }
+                    Button { model.refreshGitHubAuthStatus() } label: { Image(systemName: "arrow.clockwise") }
+                        .help("Check status")
+                        .disabled(!available || model.isBusy || model.isCheckingGitHubAuth)
+                    Button("Sign in") { model.presentLogin() }
                         .buttonStyle(.bordered)
-                        .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
-                        .disabled(!available || model.isInstallingGitHubCLI)
+                        .disabled(!model.canPresentLogin)
                 }
+                .frame(minWidth: Layout.actionColumnMinimumWidth, alignment: .trailing)
             },
             leadingInset: Layout.nodeIndent
         )

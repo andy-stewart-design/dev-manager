@@ -1,6 +1,7 @@
 import Combine
 import Darwin
 import Foundation
+import AppKit
 
 /// Host-facing work is kept behind small closures so model operation tests can
 /// control completion without launching installers or probing the machine.
@@ -9,6 +10,9 @@ struct ProvisioningModelDependencies {
     typealias HomebrewDownloader = @Sendable (@escaping @Sendable @MainActor () -> Void) async throws -> URL
     typealias InstallationRecorder = @Sendable (String, ProvisioningProcessResult) -> ProvisioningInstallationLog.AppendResult
 
+    let runGitHubLogin: @Sendable (ProvisioningGitHubCLIContext, GitHubHostname, @escaping @Sendable (GitHubDeviceFlowEvent) -> Void) async -> GitHubAuthOperationResult
+    let openLoginURL: @MainActor @Sendable (URL) -> Void
+    let copyLoginCode: @MainActor @Sendable (String) -> Void
     let inspectGitHubAuth: @Sendable (ProvisioningGitHubCLIContext, String) async -> GitHubAuthStatus
     let inspect: @Sendable () async -> ProvisioningInspection
     let inspectTarget: @Sendable (ProvisioningCheck.ID) async -> ProvisioningTargetedInspection
@@ -23,6 +27,9 @@ struct ProvisioningModelDependencies {
 
     @MainActor
     init(
+        runGitHubLogin: @escaping @Sendable (ProvisioningGitHubCLIContext, GitHubHostname, @escaping @Sendable (GitHubDeviceFlowEvent) -> Void) async -> GitHubAuthOperationResult = { _, _, _ in .init(completion: .failed(.unavailable), warnedAboutPlaintextStorage: false) },
+        openLoginURL: @escaping @MainActor @Sendable (URL) -> Void = { _ in },
+        copyLoginCode: @escaping @MainActor @Sendable (String) -> Void = { _ in },
         inspectGitHubAuth: (@Sendable (ProvisioningGitHubCLIContext, String) async -> GitHubAuthStatus)? = nil,
         inspect: @escaping @Sendable () async -> ProvisioningInspection = { await ProvisioningInspector.inspect() },
         inspectTarget: @escaping @Sendable (ProvisioningCheck.ID) async -> ProvisioningTargetedInspection = { await ProvisioningInspector.inspect(target: $0) },
@@ -37,6 +44,9 @@ struct ProvisioningModelDependencies {
             ProvisioningInstallationLog.append(commandLabel: label, result: result)
         }
     ) {
+        self.runGitHubLogin = runGitHubLogin
+        self.openLoginURL = openLoginURL
+        self.copyLoginCode = copyLoginCode
         self.inspectGitHubAuth = inspectGitHubAuth ?? { _, host in
             GitHubAuthStatus(host: host, outcome: .unverified(reason: .unknownState), environmentCredential: nil)
         }
@@ -91,6 +101,7 @@ final class ProvisioningModel: ObservableObject {
         case inspection(token: UUID, target: ProvisioningCheck.ID?)
         case tool(token: UUID, target: ProvisioningCheck.ID, phase: ToolPhase)
         case shell(token: UUID, kind: ShellOperation)
+        case githubLogin(token: UUID)
     }
 
     let dependencies: ProvisioningModelDependencies
@@ -98,7 +109,20 @@ final class ProvisioningModel: ObservableObject {
     @Published private(set) var isCheckingGitHubAuth = false
     private var gitHubAuthTask: Task<Void, Never>?
     private var gitHubAuthGeneration = UUID()
-    private let gitHubAuthHost = "github.com"
+    @Published private(set) var selectedAuthHost = "github.com"
+    @Published var isShowingLogin = false
+    @Published var loginHostInput = "github.com"
+    enum LoginState: Equatable {
+        case entry(error: Bool), preflight, waiting(code: String?, url: URL?), verifying
+        case blocked(String), success(login: String, cancelled: Bool, plaintext: Bool), error(String), cancelling, cancelled
+    }
+    @Published private(set) var loginState: LoginState = .entry(error: false)
+    @Published private(set) var plaintextWarningHosts: Set<String> = []
+    private var loginTask: Task<Void, Never>?
+    private var loginCode: String?
+    private var loginURL: URL?
+    private var loginOpenedBrowser = false
+    private var loginWarned = false
 
     @Published private(set) var operationState: OperationState?
     @Published private(set) var checks: [ProvisioningCheck] = []
@@ -160,7 +184,7 @@ final class ProvisioningModel: ObservableObject {
             case let .preflight(token), let .reinspecting(token): return token
             case .installing, .handoff: return nil
             }
-        case .shell, nil: return nil
+        case .shell, .githubLogin, nil: return nil
         }
     }
 
@@ -172,7 +196,7 @@ final class ProvisioningModel: ObservableObject {
             case .preflight, .reinspecting: return target
             case .installing, .handoff: return nil
             }
-        case .shell, nil: return nil
+        case .shell, .githubLogin, nil: return nil
         }
     }
 
@@ -213,7 +237,12 @@ final class ProvisioningModel: ObservableObject {
 
     @MainActor
     init(dependencies: ProvisioningModelDependencies? = nil) {
-        self.dependencies = dependencies ?? ProvisioningModelDependencies(inspectGitHubAuth: { context, host in
+        self.dependencies = dependencies ?? ProvisioningModelDependencies(runGitHubLogin: { context, host, event in
+            await GitHubAuthOperation.run(using: context, hostname: host, onEvent: event)
+        }, openLoginURL: { _ = NSWorkspace.shared.open($0) }, copyLoginCode: { code in
+            NSPasteboard.general.clearContents()
+            _ = NSPasteboard.general.setString(code, forType: .string)
+        }, inspectGitHubAuth: { context, host in
             await GitHubAuthService.status(using: context, hostname: host)
         })
     }
@@ -226,7 +255,7 @@ final class ProvisioningModel: ObservableObject {
 
     var isSupportedEnvironment: Bool { supportedEnvironmentIssue == nil }
     var isBusy: Bool {
-        let hasActiveOperation = operationState != nil ||
+        let hasActiveOperation = operationState != nil || isShowingLogin ||
             isShowingToolConsent || isShowingShellConfigurationConsent || isShowingShellRestoreConsent
 #if DEBUG
         return hasActiveOperation || isShowingFixtureConsent
@@ -439,7 +468,7 @@ final class ProvisioningModel: ObservableObject {
     func checkAgain() async {
         // A tool's own preflight/post-install refresh is represented inside its
         // tool state. Public inspections never replace an operation they do not own.
-        guard operationState == nil else { return }
+        guard !isBusy else { return }
 
         let operationID = UUID()
         let isInitialInspection = !hasLoadedInitialInspection
@@ -497,6 +526,7 @@ final class ProvisioningModel: ObservableObject {
 
     /// Account inspection is independent of local readiness and installer ownership.
     func refreshGitHubAuthStatus() {
+        guard !isShowingLogin, operationState.map({ if case .githubLogin = $0 { return true }; return false }) != true else { return }
         gitHubAuthTask?.cancel()
         let generation = UUID()
         gitHubAuthGeneration = generation
@@ -505,7 +535,7 @@ final class ProvisioningModel: ObservableObject {
             isCheckingGitHubAuth = false
             return
         }
-        let host = gitHubAuthHost
+        let host = selectedAuthHost
         let inspect = dependencies.inspectGitHubAuth
         gitHubAuthStatus = GitHubAuthStatus(host: host, outcome: .checking, environmentCredential: nil)
         isCheckingGitHubAuth = true
@@ -518,6 +548,142 @@ final class ProvisioningModel: ObservableObject {
             self.isCheckingGitHubAuth = false
             self.gitHubAuthTask = nil
         }
+    }
+
+    var canPresentLogin: Bool {
+        !isBusy && githubCLIContext != nil && state(for: .githubCLI)?.isReady == true
+    }
+
+    func presentLogin() {
+        guard canPresentLogin else { return }
+        loginHostInput = "github.com"
+        loginState = .entry(error: false)
+        isShowingLogin = true
+    }
+
+    func chooseLoginHost() {
+        guard operationState == nil else { return }
+        loginState = .entry(error: false)
+    }
+
+    func dismissLogin() {
+        isShowingLogin = false
+        loginState = .cancelled
+        loginCode = nil
+        loginURL = nil
+        loginTask?.cancel()
+    }
+
+    func continueLogin() {
+        guard isShowingLogin, operationState == nil, let context = githubCLIContext,
+              state(for: .githubCLI)?.isReady == true else { return }
+        guard let host = try? GitHubHostname(loginHostInput) else {
+            loginState = .entry(error: true); return
+        }
+        selectedAuthHost = host.value
+        loginHostInput = host.value
+        gitHubAuthTask?.cancel()
+        gitHubAuthTask = nil
+        gitHubAuthGeneration = UUID()
+        isCheckingGitHubAuth = false
+        gitHubAuthStatus = nil
+        loginCode = nil; loginURL = nil; loginOpenedBrowser = false; loginWarned = false
+        let token = UUID()
+        operationState = .githubLogin(token: token)
+        loginState = .preflight
+        let inspect = dependencies.inspectGitHubAuth
+        let run = dependencies.runGitHubLogin
+        loginTask = Task { [weak self] in
+            let preflight = await inspect(context, host.value)
+            guard let self else { return }
+            defer {
+                if self.operationState == .githubLogin(token: token) {
+                    self.operationState = nil
+                    self.loginTask = nil
+                    self.loginCode = nil; self.loginURL = nil
+                }
+            }
+            guard self.ownsLogin(token, context: context, host: host) else { return }
+            guard preflight.host == host.value else {
+                if self.isShowingLogin { self.loginState = .blocked("Authentication status could not be verified.") }; return
+            }
+            self.gitHubAuthStatus = preflight
+            if Task.isCancelled { if self.isShowingLogin { self.loginState = .cancelled }; return }
+            var environment = preflight.environmentCredential
+            if case let .authenticated(_, .environment(name)) = preflight.outcome { environment = name }
+            if let environment {
+                if self.isShowingLogin { self.loginState = .blocked("The \(environment.rawValue) environment credential takes precedence. Sign-in is blocked; it was not changed.") }; return
+            }
+            switch preflight.outcome {
+            case let .authenticated(login, _):
+                if self.isShowingLogin { self.loginState = .blocked("Already signed in to \(host.value) as \(login). Existing credentials were not replaced.") }; return
+            case .notSignedIn, .invalidCredentials: break
+            default:
+                if self.isShowingLogin { self.loginState = .blocked("Authentication status could not be verified. Check connectivity and try again.") }; return
+            }
+            if self.isShowingLogin { self.loginState = .waiting(code: nil, url: nil) }
+            let result = await run(context, host) { [weak self] event in
+                Task { @MainActor [weak self] in self?.receiveLoginEvent(event, token: token, context: context, host: host) }
+            }
+            guard self.ownsLogin(token, context: context, host: host) else { return }
+            if self.isShowingLogin { self.loginState = .verifying }
+            // A detached read-only inspection must run even when the login task was cancelled.
+            let post = await Task.detached { await inspect(context, host.value) }.value
+            guard self.ownsLogin(token, context: context, host: host) else { return }
+            guard post.host == host.value else {
+                if self.isShowingLogin { self.loginState = .error("Authentication status could not be verified.") }; return
+            }
+            self.gitHubAuthStatus = post
+            let cancelled = Task.isCancelled || result.completion == .cancelled
+            if case let .authenticated(login, _) = post.outcome {
+                let plaintext = result.warnedAboutPlaintextStorage || self.loginWarned
+                if plaintext { self.plaintextWarningHosts.insert(host.value) }
+                if self.isShowingLogin { self.loginState = .success(login: login, cancelled: cancelled, plaintext: plaintext) }
+            } else if self.isShowingLogin {
+                if cancelled {
+                    self.loginState = .cancelled
+                } else {
+                    switch result.completion {
+                    case let .failed(failure): self.loginState = .error(failure.localizedDescription)
+                    case .exited(0): self.loginState = .error("Sign-in finished but could not be verified. No authenticated account is confirmed.")
+                    case .exited: self.loginState = .error("GitHub CLI could not complete login.")
+                    case .cancelled: self.loginState = .cancelled
+                    }
+                }
+            }
+        }
+    }
+
+    private func ownsLogin(_ token: UUID, context: ProvisioningGitHubCLIContext, host: GitHubHostname) -> Bool {
+        operationState == .githubLogin(token: token) && githubCLIContext == context && selectedAuthHost == host.value
+    }
+
+    private func receiveLoginEvent(_ event: GitHubDeviceFlowEvent, token: UUID, context: ProvisioningGitHubCLIContext, host: GitHubHostname) {
+        guard ownsLogin(token, context: context, host: host), isShowingLogin,
+              case .waiting = loginState else { return }
+        switch event {
+        case let .deviceCode(code): loginCode = code
+        case let .verificationURL(url):
+            guard host.validatesDeviceURL(url) else { return }
+            loginURL = url
+        case .plaintextStorageWarning: loginWarned = true
+        case .authenticationComplete: break
+        }
+        loginState = .waiting(code: loginCode, url: loginURL)
+        if loginCode != nil, let url = loginURL, !loginOpenedBrowser {
+            loginOpenedBrowser = true
+            dependencies.openLoginURL(url)
+        }
+    }
+
+    func openLoginBrowser() {
+        guard isShowingLogin, case .waiting = loginState, let loginURL else { return }
+        loginOpenedBrowser = true
+        dependencies.openLoginURL(loginURL)
+    }
+    func copyLoginDeviceCode() {
+        guard isShowingLogin, case .waiting = loginState, let loginCode else { return }
+        dependencies.copyLoginCode(loginCode)
     }
 
     private func refreshShellInspection() {

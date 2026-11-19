@@ -34,6 +34,8 @@ nonisolated private enum ProvisioningProcessError: LocalizedError, Sendable {
 nonisolated private final class ProvisioningOutputCollector: @unchecked Sendable {
     private static let maximumBytes = 12_000
     private let lock = NSLock()
+    private let streaming: ProvisioningStreamingState?
+    init(streaming: ProvisioningStreamingState? = nil) { self.streaming = streaming }
     private var stdoutStorage = ""
     private var stderrStorage = ""
 
@@ -50,6 +52,10 @@ nonisolated private final class ProvisioningOutputCollector: @unchecked Sendable
     }
 
     func append(_ data: Data, stream: OutputStream) {
+        if let streaming {
+            streaming.append(data, stream: stream == .stdout ? .stdout : .stderr)
+            return
+        }
         let text = String(decoding: data, as: UTF8.self)
         lock.lock()
         defer { lock.unlock() }
@@ -137,7 +143,8 @@ nonisolated enum ProvisioningCommandRunner {
         arguments: [String],
         environment: [String: String],
         label: String?,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        streaming: ProvisioningStreamingState? = nil
     ) -> ProvisioningProcessResult {
         let spawned: ProvisioningSpawn
         do {
@@ -150,13 +157,13 @@ nonisolated enum ProvisioningCommandRunner {
             return ProvisioningProcessResult(
                 succeeded: false,
                 stdout: "",
-                stderr: label.map { "\($0): \(error.localizedDescription)" } ?? error.localizedDescription,
+                stderr: streaming == nil ? (label.map { "\($0): \(error.localizedDescription)" } ?? error.localizedDescription) : "",
                 terminationStatus: -1,
                 timedOut: false
             )
         }
 
-        let collector = ProvisioningOutputCollector()
+        let collector = ProvisioningOutputCollector(streaming: streaming)
         let cancellation = ProvisioningDrainCancellation()
         let drains = DispatchGroup()
         drains.enter()
@@ -170,10 +177,11 @@ nonisolated enum ProvisioningCommandRunner {
             drains.leave()
         }
 
-        let deadline = Date().addingTimeInterval(max(0, timeout))
+        let deadline = ProcessInfo.processInfo.systemUptime + max(0, timeout)
         var leaderExited = false
         var outputCollected = false
-        while Date() < deadline {
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if streaming?.reason != nil { break }
             if !leaderExited { leaderExited = hasObservedExit(spawned.processID) }
             outputCollected = drains.wait(timeout: .now()) == .success
             if leaderExited && outputCollected { break }
@@ -183,7 +191,7 @@ nonisolated enum ProvisioningCommandRunner {
         outputCollected = drains.wait(timeout: .now()) == .success
 
         var timedOut = !leaderExited || !outputCollected
-        if timedOut {
+        if timedOut && streaming == nil {
             collector.append(Data("\nTimed out; terminating the provisioning process group.\n".utf8), stream: .stderr)
         }
 
@@ -196,7 +204,7 @@ nonisolated enum ProvisioningCommandRunner {
             processID: spawned.processID,
             grace: ProvisioningConfiguration.processCleanupGrace
         )
-        if !groupWasClean { timedOut = true }
+        if !groupWasClean { timedOut = true; streaming?.cleanupFailed() }
 
         if !outputCollected {
             if drains.wait(timeout: .now() + ProvisioningConfiguration.processCleanupGrace) == .success {
@@ -213,6 +221,7 @@ nonisolated enum ProvisioningCommandRunner {
             timeout: ProvisioningConfiguration.processCleanupGrace
         ) else {
             timedOut = true
+            streaming?.cleanupFailed()
             return ProvisioningProcessResult(
                 succeeded: false,
                 stdout: collector.stdout,
@@ -230,6 +239,30 @@ nonisolated enum ProvisioningCommandRunner {
             terminationStatus: terminationStatus,
             timedOut: timedOut
         )
+    }
+
+    nonisolated static func runOwned(
+        executableURL: URL, arguments: [String], environment: [String: String],
+        timeout: TimeInterval, state: ProvisioningStreamingState
+    ) async -> ProvisioningOwnedProcess.Outcome {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    if state.reason != nil {
+                        continuation.resume(returning: state.reason ?? .cancelled)
+                        return
+                    }
+                    let result = runSynchronously(executableURL: executableURL, arguments: arguments,
+                                                  environment: environment, label: nil, timeout: timeout,
+                                                  streaming: state)
+                    let outcome = state.reason ?? (result.timedOut ? .deadlineExceeded :
+                        (result.terminationStatus == -1 ? .launchFailed : .exited(result.terminationStatus)))
+                    continuation.resume(returning: outcome)
+                }
+            }
+        } onCancel: {
+            state.cancel()
+        }
     }
 
     private nonisolated struct ProvisioningSpawn: Sendable {

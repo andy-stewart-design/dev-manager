@@ -20,6 +20,8 @@ Dev Manager does not install project dependencies. Current arbitrary project com
 
 Dev Manager is not a full interactive PTY terminal.
 
+GitHub CLI is optional. When available, browser-based sign-in can be started from the provisioning UI for GitHub.com or an Enterprise host; login is restricted to stable CLI versions 2.101.0 through 2.105.0 (patch zero) and requires verified post-login status. Read-only authentication status has a separate, broader version policy. The CLI may store credentials in plaintext, and Enterprise behavior has not been live-verified.
+
 ## Build from source
 
 1. Open `dev-manager.xcodeproj` in Xcode. The project was created with Xcode 27.2, so use a current Xcode.
